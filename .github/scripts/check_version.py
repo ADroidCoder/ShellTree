@@ -6,12 +6,15 @@ import pathlib
 import re
 import sys
 
+# Windows 上控制台默认不是 UTF-8，打印中文会报错
+sys.stdout.reconfigure(encoding="utf-8")
+
 tag = sys.argv[1].removeprefix("v")
 root = pathlib.Path(__file__).resolve().parents[2]
 found = {
-    "tauri.conf.json": json.loads((root / "src-tauri/tauri.conf.json").read_text())["version"],
-    "package.json": json.loads((root / "package.json").read_text())["version"],
-    "src-tauri/Cargo.toml": re.search(r'^version = "(.+?)"', (root / "src-tauri/Cargo.toml").read_text(), re.M).group(1),
+    "tauri.conf.json": json.loads((root / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))["version"],
+    "package.json": json.loads((root / "package.json").read_text(encoding="utf-8"))["version"],
+    "src-tauri/Cargo.toml": re.search(r'^version = "(.+?)"', (root / "src-tauri/Cargo.toml").read_text(encoding="utf-8"), re.M).group(1),
 }
 bad = {k: v for k, v in found.items() if v != tag}
 if bad:

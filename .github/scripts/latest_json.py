@@ -18,7 +18,7 @@ for platform, pattern in patterns.items():
     for f in dist.glob(pattern):
         sig = f.with_name(f.name + ".sig")
         if sig.exists():
-            platforms[platform] = {"signature": sig.read_text().strip(), "url": base + f.name}
+            platforms[platform] = {"signature": sig.read_text(encoding="utf-8").strip(), "url": base + f.name}
 
 if not platforms:
     sys.exit("没有找到签名过的更新包，跳过 latest.json（仓库的 Secrets 里没有配置 TAURI_SIGNING_PRIVATE_KEY？）")
