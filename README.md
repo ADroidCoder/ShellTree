@@ -56,6 +56,8 @@ Get the latest installer from the [**Releases page**](https://github.com/ADroidC
 - **Reads `~/.ssh/config`** — hosts from your SSH config appear automatically and can be saved with one click.
 - **OS detection** — Ubuntu, Debian, CentOS, Alpine and others are detected on first connect, and the host icon is colored by OS.
 - **Authentication** — Auto (like `ssh`: tries ssh-agent and the default keys in `~/.ssh`, then falls back to a password), password, or private key (passphrase-protected keys supported). Passwords are stored in the system keychain (macOS Keychain / Windows Credential Manager).
+- **Jump hosts** — reach internal servers through a bastion, like `ssh -J`, including multiple hops. `ProxyJump` in `~/.ssh/config` is recognized.
+- **Verification codes** — when a server asks for a one-time code (Google Authenticator, etc.), you're prompted for it. Password + code and key + code both work.
 - **Host key verification** — shows the fingerprint on first connect and a prominent warning if it ever changes, protecting against man-in-the-middle attacks.
 - **Known hosts** — view and remove entries in `~/.ssh/known_hosts`, e.g. after a server is reinstalled; right-click an entry to add it as a host.
 
@@ -64,7 +66,9 @@ Get the latest installer from the [**Releases page**](https://github.com/ADroidC
 - **No freezing on floods** — when you `cat` a huge file or run `yes`, output is sent at the pace the UI can render, so the window stays responsive and Ctrl+C takes effect immediately.
 - **History suggestions** — as you type, a gray suggestion from commands you've run on this host appears; press → or End to accept (like fish or zsh-autosuggestions). Passwords are never recorded, suggestions are off inside full-screen apps like vim or top, and history stays on your computer — clear it any time.
 - **Snippets** — save frequently used commands and insert or run them from the snippet panel next to the terminal. Use `{{variables}}` to fill in values each time.
-- **Session tabs** — one tab per session with a status color; press Enter to reconnect after a disconnect.
+- **Session tabs** — one tab per session with a status color.
+- **Auto-reconnect** — reconnects automatically when the network drops, keeping the previous output on screen; press Enter to reconnect right away.
+- **Port forwarding** — local (`-L`, e.g. reach a database on the server from your computer), remote (`-R`) and SOCKS5 dynamic (`-D`). Configure them per host to start on every connect, or add one on the fly from the panel next to the terminal. `LocalForward` and friends in `~/.ssh/config` are recognized.
 - Copy, paste and clear from the context menu. On Windows, copy/paste is Ctrl+Shift+C / V so Ctrl+C stays with the terminal.
 - ⌘ / Ctrl-click a link to open it in your browser.
 
@@ -75,6 +79,7 @@ Get the latest installer from the [**Releases page**](https://github.com/ADroidC
 - **Dual-pane SFTP** — pick Local or any host for each pane, and drag files between panes to upload or download.
 - **Drag-and-drop upload** — drop files or folders from Finder / Explorer; drop onto a folder to upload into it.
 - **Transfer queue** — progress, speed, time remaining and cancel. Partial files are cleaned up on failure or cancel; downloads never overwrite a local file of the same name.
+- **Edit remote files** — double-click a text file to open it in a local editor (the system text editor by default, or VS Code etc. from Settings); saving uploads it back automatically, with a warning if the file changed on the server in the meantime.
 - Rename, delete, new folder, change permissions, copy path. The file list is virtualized, so folders with tens of thousands of files stay smooth.
 - Executable permissions are kept when uploading scripts.
 
@@ -151,6 +156,7 @@ Output:
 ```bash
 cargo test -p shelltree-core   # core library tests
 npm test                     # command-line detection tests (suggestions)
+cargo run -p shelltree-core --example otp   # verification-code login (starts a local test server)
 npm run check                # frontend type check
 ```
 
@@ -170,6 +176,7 @@ Regular pushes only run tests. Run the workflow manually from the Actions page t
 crates/shelltree-core/   Core library (UI-independent, testable on its own)
   src/conn.rs          Connecting, host key verification, login (password / key / ssh-agent)
   src/shell.rs         Terminal channel, output batching and flow control
+  src/forward.rs       Port forwarding (local / remote / SOCKS5)
   src/sftp.rs          Remote file operations, upload and download
   src/local.rs         Local file operations (the Local pane in dual-pane SFTP)
   src/hosts.rs         Host list, ~/.ssh/config, keychain

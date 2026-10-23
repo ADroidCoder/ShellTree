@@ -3,7 +3,8 @@
   import Moon from "@lucide/svelte/icons/moon";
   import Sun from "@lucide/svelte/icons/sun";
   import MonitorCog from "@lucide/svelte/icons/monitor-cog";
-  import { setFontSize, setSuggest, setTheme, settings, type Theme } from "../lib/settings.svelte";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { setEditor, setFontSize, setSuggest, setTheme, settings, type Theme } from "../lib/settings.svelte";
   import { clearHistory, historyCount, loadHistory } from "../lib/history";
   import { confirm, toast } from "../lib/store.svelte";
   import { onMount } from "svelte";
@@ -20,6 +21,26 @@
     count = 0;
     toast(t("已清除命令历史"));
   }
+
+  const isMac = navigator.userAgent.includes("Mac");
+
+  async function pickEditor() {
+    const f = await openDialog({
+      title: t("选择编辑器"),
+      multiple: false,
+      directory: false,
+      defaultPath: isMac ? "/Applications" : undefined,
+      filters: isMac ? undefined : [{ name: t("程序"), extensions: ["exe", "cmd", "bat"] }],
+    });
+    if (typeof f === "string") setEditor(f);
+  }
+
+  const editorName = $derived(
+    settings.editor
+      .split(/[\\/]/)
+      .pop()
+      ?.replace(/\.(app|exe|cmd|bat)$/i, "") ?? "",
+  );
 
   const langs: { id: Lang | null; label: string }[] = [
     { id: null, label: "跟随系统" },
@@ -78,6 +99,20 @@
       <span>{t("已记录 {0} 条命令，只保存在本机", count)}</span>
       <button onclick={clear} disabled={!count}>{t("清除历史")}</button>
     </div>
+  </section>
+
+  <section>
+    <div class="label">{t("编辑远程文件")}</div>
+    <div class="hist">
+      <span>
+        {settings.editor ? t("用 {0} 打开", editorName) : isMac ? t("用系统的文本编辑器打开") : t("用记事本打开")}
+      </span>
+      <span class="btns">
+        {#if settings.editor}<button onclick={() => setEditor("")}>{t("恢复默认")}</button>{/if}
+        <button onclick={pickEditor}>{t("选择编辑器…")}</button>
+      </span>
+    </div>
+    <div class="note">{t("在文件面板里双击文本文件或右键“编辑”，保存后自动传回服务器。可以选 VS Code、Sublime Text 等")}</div>
   </section>
 
   <section>
@@ -183,6 +218,15 @@
   }
   .hist button {
     height: 28px;
+  }
+  .btns {
+    display: flex;
+    gap: 6px;
+  }
+  .note {
+    margin-top: 8px;
+    color: var(--text-faint);
+    font-size: 12px;
   }
   .font {
     display: flex;

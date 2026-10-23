@@ -37,6 +37,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
       - run: cargo test -p shelltree-core --no-fail-fast
+      # 在本机起一个要求验证码的 SSH 服务器，测登录逻辑
+      - run: cargo run -p shelltree-core --example otp
       - run: npm test
       - run: npm run check
 

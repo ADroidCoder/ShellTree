@@ -1,6 +1,7 @@
 //! SSH / SFTP 的核心逻辑，不依赖界面，方便单独测试。
 
 pub mod conn;
+pub mod forward;
 pub mod hosts;
 pub mod known_hosts;
 pub mod local;
@@ -40,6 +41,8 @@ pub const NEED_PASSPHRASE: &str = "need-passphrase";
 pub const AUTH_FAILED: &str = "auth-failed";
 /// 私钥密码错误
 pub const BAD_PASSPHRASE: &str = "bad-passphrase";
+/// 用户取消了（例如没有输入验证码）
+pub const CANCELLED: &str = "cancelled";
 
 pub use russh;
 pub use russh_sftp;

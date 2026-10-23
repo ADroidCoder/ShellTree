@@ -3,6 +3,24 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type AuthKind = "auto" | "password" | "key";
 
+export type ForwardKind = "local" | "remote" | "dynamic";
+
+export interface ForwardRule {
+  kind: ForwardKind;
+  /** 空表示 127.0.0.1 */
+  bind_host: string;
+  bind_port: number;
+  dest_host: string;
+  dest_port: number;
+}
+
+export interface ForwardInfo {
+  id: number;
+  rule: ForwardRule;
+  port: number;
+  active: number;
+}
+
 export interface Host {
   id: string;
   name: string;
@@ -15,6 +33,9 @@ export interface Host {
   save_password: boolean;
   last_used: number;
   os: string;
+  /** 跳板机：主机 id 或名字，或者 user@host:port，多个用逗号隔开 */
+  jump: string;
+  forwards: ForwardRule[];
   from_ssh_config?: boolean;
 }
 
@@ -39,6 +60,32 @@ export interface HostKeyInfo {
 export interface HostKeyPrompt {
   id: number;
   info: HostKeyInfo;
+}
+
+/** 登录时服务器提的问题，例如验证码 */
+export interface AuthPrompt {
+  id: number;
+  info: {
+    host: string;
+    name: string;
+    instructions: string;
+    prompts: { prompt: string; echo: boolean }[];
+  };
+}
+
+/** 连接经过的一台主机 */
+export interface Hop {
+  params: ConnectParams;
+  host_id: string | null;
+  save_secret: boolean;
+}
+
+export interface EditEvent {
+  id: number;
+  session: string;
+  remote: string;
+  state: "saved" | "failed" | "conflict";
+  error: string | null;
 }
 
 export interface Entry {
@@ -88,9 +135,18 @@ export const api = {
   hostsSave: (hosts: Host[], groups: string[]) => invoke<void>("hosts_save", { hosts, groups }),
   hostSecretSet: (id: string, secret: string | null) => invoke<void>("host_secret_set", { id, secret }),
 
-  connect: (session: string, params: ConnectParams, hostId: string | null, saveSecret: boolean) =>
-    invoke<string | null>("ssh_connect", { session, params, hostId, saveSecret }),
+  /** 依次登录 chain 里的主机，最后一个是目标主机，前面的是跳板机 */
+  connect: (session: string, chain: Hop[]) => invoke<string | null>("ssh_connect", { session, chain }),
   hostkeyReply: (id: number, accept: boolean) => invoke<void>("hostkey_reply", { id, accept }),
+  authPromptReply: (id: number, answers: string[] | null) => invoke<void>("auth_prompt_reply", { id, answers }),
+
+  forwardStart: (session: string, rule: ForwardRule) => invoke<ForwardInfo>("forward_start", { session, rule }),
+  forwardStop: (session: string, id: number) => invoke<void>("forward_stop", { session, id }),
+  forwardsList: (session: string) => invoke<ForwardInfo[]>("forwards_list", { session }),
+
+  editOpen: (session: string, path: string, editor: string | null) => invoke<void>("edit_open", { session, path, editor }),
+  editUpload: (id: number) => invoke<void>("edit_upload", { id }),
+  editForget: (session: string) => invoke<void>("edit_forget", { session }),
   disconnect: (session: string) => invoke<void>("ssh_disconnect", { session }),
 
   shellOpen: (

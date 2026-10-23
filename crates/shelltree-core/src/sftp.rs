@@ -108,6 +108,28 @@ pub async fn chmod(s: &SftpSession, path: &str, perm: u32) -> Result<()> {
     s.set_metadata(path, attrs).await.map_err(describe)
 }
 
+/// 文件的修改时间（秒）和大小
+pub async fn stat(s: &SftpSession, path: &str) -> Result<(u32, u64)> {
+    let m = s.metadata(path).await.map_err(describe)?;
+    Ok((m.mtime.unwrap_or(0), m.size.unwrap_or(0)))
+}
+
+/// 读取整个文件（编辑远程文件用）
+pub async fn read_file(s: &SftpSession, path: &str) -> Result<Vec<u8>> {
+    s.read(path).await.map_err(|e| tr!("读取 {path} 失败：{}", "Couldn't read {path}: {}", describe(e)))
+}
+
+/// 用 data 覆盖整个文件。直接写原文件而不是写临时文件再改名，这样文件的权限、所有者和链接都不变
+pub async fn write_file(s: &SftpSession, path: &str, data: &[u8]) -> Result<()> {
+    let err = |e: String| tr!("保存 {path} 失败：{e}", "Couldn't save {path}: {e}");
+    let mut f = s
+        .open_with_flags(path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| err(describe(e)))?;
+    f.write_all(data).await.map_err(|e| err(e.to_string()))?;
+    f.shutdown().await.map_err(|e| err(e.to_string()))
+}
+
 /// 删除文件或整个文件夹
 pub async fn remove(s: &SftpSession, path: &str, is_dir: bool) -> Result<()> {
     if !is_dir {
@@ -162,7 +184,7 @@ impl Progress {
 }
 
 /// 传输被取消（不是错误，界面不显示）
-pub const CANCELLED: &str = "cancelled";
+pub use crate::CANCELLED;
 
 /// 要传的一个文件：本地路径、远程路径、大小
 struct Job {

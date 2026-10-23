@@ -2,6 +2,7 @@
 
 use crate::{Result, tr};
 use crate::conn::AuthKind;
+use crate::forward::{ForwardKind, ForwardRule};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -24,6 +25,10 @@ pub struct Host {
     pub last_used: u64,
     /// 连接时识别到的系统，例如 ubuntu，用来显示图标
     pub os: String,
+    /// 跳板机：另一台主机的 id 或名字，或者 user@host:port；多个用逗号隔开，按顺序经过（和 ProxyJump 一样）
+    pub jump: String,
+    /// 连接后自动开启的端口转发
+    pub forwards: Vec<ForwardRule>,
     /// 从 ~/.ssh/config 读来的，不保存到 hosts.json
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub from_ssh_config: bool,
@@ -138,6 +143,12 @@ pub fn parse_ssh_config(text: &str) -> Vec<Host> {
                             h.key_path = value.to_string();
                             h.auth = AuthKind::Key;
                         }
+                        "proxyjump" if h.jump.is_empty() && !value.eq_ignore_ascii_case("none") => h.jump = value.to_string(),
+                        "localforward" | "remoteforward" | "dynamicforward" => {
+                            if let Some(f) = parse_forward(&key, value) {
+                                h.forwards.push(f);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -151,6 +162,29 @@ pub fn parse_ssh_config(text: &str) -> Vec<Host> {
         }
     }
     out
+}
+
+/// 解析 LocalForward / RemoteForward 的 `[地址:]端口 目标:端口`，DynamicForward 的 `[地址:]端口`
+fn parse_forward(key: &str, value: &str) -> Option<ForwardRule> {
+    let mut parts = value.split_whitespace();
+    let (bind_host, bind_port) = split_host_port(parts.next()?)?;
+    let kind = match key {
+        "localforward" => ForwardKind::Local,
+        "remoteforward" => ForwardKind::Remote,
+        _ => return Some(ForwardRule { kind: ForwardKind::Dynamic, bind_host, bind_port, ..Default::default() }),
+    };
+    let (dest_host, dest_port) = split_host_port(parts.next()?)?;
+    Some(ForwardRule { kind, bind_host, bind_port, dest_host, dest_port })
+}
+
+/// `host:port`、`[v6]:port` 或只有 `port`
+fn split_host_port(s: &str) -> Option<(String, u16)> {
+    let (host, port) = match s.rsplit_once(':') {
+        Some((h, p)) => (h.trim_matches(['[', ']']).to_string(), p),
+        None => (String::new(), s),
+    };
+    let host = if host == "*" { "0.0.0.0".to_string() } else { host };
+    Some((host, port.parse().ok()?))
 }
 
 #[cfg(test)]
@@ -170,5 +204,20 @@ mod tests {
         assert_eq!(hosts[1].auth, AuthKind::Key);
         assert_eq!(hosts[2].host, "github.com");
         assert_eq!(hosts[2].auth, AuthKind::Auto);
+    }
+
+    #[test]
+    fn parses_jump_and_forwards() {
+        let hosts = parse_ssh_config(
+            "Host inner\n  HostName 10.0.0.9\n  ProxyJump bastion,ops@1.2.3.4:2222\n  LocalForward 3307 db:3306\n  RemoteForward *:8080 localhost:3000\n  DynamicForward 1080\n",
+        );
+        let h = &hosts[0];
+        assert_eq!(h.jump, "bastion,ops@1.2.3.4:2222");
+        assert_eq!(h.forwards.len(), 3);
+        assert_eq!(h.forwards[0], ForwardRule { kind: ForwardKind::Local, bind_host: "".into(), bind_port: 3307, dest_host: "db".into(), dest_port: 3306 });
+        assert_eq!(h.forwards[1].bind_host, "0.0.0.0");
+        assert_eq!(h.forwards[1].dest_host, "localhost");
+        assert_eq!(h.forwards[2].kind, ForwardKind::Dynamic);
+        assert_eq!(h.forwards[2].bind_port, 1080);
     }
 }
