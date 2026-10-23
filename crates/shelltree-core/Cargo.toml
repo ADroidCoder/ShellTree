@@ -1,0 +1,14 @@
+[package]
+name = "shelltree-core"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+# 不用默认的 aws-lc-rs：它在 Windows 上编译要装 cmake 和 nasm
+russh = { version = "0.64", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "3"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
