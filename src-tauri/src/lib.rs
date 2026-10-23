@@ -1,7 +1,10 @@
+mod edit;
+
 use serde::{Deserialize, Serialize};
-use shelltree_core::conn::{self, AuthKind, ConnectParams, Connection, HostKeyInfo};
+use shelltree_core::conn::{self, AuthKind, ConnectParams, Connection, HostKeyInfo, PromptInfo};
+use shelltree_core::forward::{self, Forward, ForwardRule};
 use shelltree_core::hosts::{self, Host, HostStore};
-use shelltree_core::{known_hosts, local, tr};
+use shelltree_core::{AUTH_FAILED, BAD_PASSPHRASE, NEED_PASSPHRASE, NEED_PASSWORD, known_hosts, local, tr};
 use shelltree_core::russh_sftp::client::SftpSession;
 use shelltree_core::sftp::{self, Entry, Progress};
 use shelltree_core::shell::Shell;
@@ -18,10 +21,27 @@ type CmdResult<T> = Result<T, String>;
 
 /// 一个已登录的会话（界面上的一个标签页）
 struct Session {
-    conn: Connection,
+    conn: Arc<Connection>,
     /// SFTP 第一次用到时才打开
     sftp: tokio::sync::Mutex<Option<Arc<SftpSession>>>,
     shells: Mutex<Vec<u64>>,
+    forwards: Mutex<Vec<RunningForward>>,
+}
+
+struct RunningForward {
+    id: u64,
+    rule: ForwardRule,
+    forward: Forward,
+}
+
+#[derive(Serialize)]
+struct ForwardInfo {
+    id: u64,
+    rule: ForwardRule,
+    /// 实际监听的端口
+    port: u16,
+    /// 正在通过这个转发的连接数
+    active: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Serialize)]
@@ -98,6 +118,9 @@ struct AppState {
     shells: Mutex<HashMap<u64, Arc<Shell>>>,
     /// 等界面回答“是否信任主机指纹”
     hostkey_waiters: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
+    /// 等界面回答登录时服务器提的问题（验证码等）
+    prompt_waiters: Mutex<HashMap<u64, oneshot::Sender<Option<Vec<String>>>>>,
+    edits: Mutex<Vec<edit::EditFile>>,
     transfers: Mutex<Vec<Transfer>>,
     next_id: AtomicU64,
     hosts: HostStore,
@@ -165,27 +188,39 @@ struct HostKeyPrompt {
     info: HostKeyInfo,
 }
 
-#[tauri::command]
-async fn ssh_connect(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session: String,
-    mut params: ConnectParams,
+#[derive(Serialize, Clone)]
+struct AuthPrompt {
+    id: u64,
+    info: PromptInfo,
+}
+
+/// 连接经过的一台主机（跳板机或目标主机）
+#[derive(Deserialize)]
+struct Hop {
+    params: ConnectParams,
     host_id: Option<String>,
+    #[serde(default)]
     save_secret: bool,
-) -> CmdResult<Option<String>> {
+}
+
+/// 依次登录 chain 里的主机：前面的是跳板机，最后一个是目标主机。返回识别到的系统。
+/// 跳板机需要密码时返回 `jump:序号:need-password` 这样的错误，界面据此问是哪台主机的密码
+#[tauri::command]
+async fn ssh_connect(app: AppHandle, state: State<'_, AppState>, session: String, mut chain: Vec<Hop>) -> CmdResult<Option<String>> {
     // 没有输入密码时用钥匙串里保存的
-    if let Some(id) = host_id.as_deref() {
-        if params.auth == AuthKind::Key {
-            if params.passphrase.is_none() {
-                params.passphrase = hosts::get_secret(id);
+    for hop in &mut chain {
+        let Some(id) = hop.host_id.as_deref() else { continue };
+        let p = &mut hop.params;
+        if p.auth == AuthKind::Key {
+            if p.passphrase.is_none() {
+                p.passphrase = hosts::get_secret(id);
             }
-        } else if params.password.is_none() {
-            params.password = hosts::get_secret(id);
+        } else if p.password.is_none() {
+            p.password = hosts::get_secret(id);
         }
     }
     let handle = app.clone();
-    let ask: conn::HostKeyAsk = Arc::new(move |info| {
+    let host_key: conn::HostKeyAsk = Arc::new(move |info| {
         let app = handle.clone();
         Box::pin(async move {
             let state = app.state::<AppState>();
@@ -198,20 +233,60 @@ async fn ssh_connect(
             rx.await.unwrap_or(false)
         })
     });
-    let c = conn::connect(&params, ask).await?;
-    if save_secret && let Some(id) = host_id.as_deref() {
-        let secret = if params.auth == AuthKind::Key { &params.passphrase } else { &params.password };
+    let handle = app.clone();
+    let prompt: conn::PromptAsk = Arc::new(move |info| {
+        let app = handle.clone();
+        Box::pin(async move {
+            let state = app.state::<AppState>();
+            let id = state.id();
+            let (tx, rx) = oneshot::channel();
+            state.prompt_waiters.lock().unwrap().insert(id, tx);
+            if app.emit("auth-prompt", AuthPrompt { id, info }).is_err() {
+                return None;
+            }
+            rx.await.ok().flatten()
+        })
+    });
+    let params: Vec<ConnectParams> = chain.iter().map(|h| h.params.clone()).collect();
+    let c = conn::connect(&params, &conn::Callbacks { host_key, prompt: Some(prompt) }).await.map_err(|e| {
+        if e.hop + 1 >= chain.len() {
+            return e.message;
+        }
+        let codes = [NEED_PASSWORD, NEED_PASSPHRASE, AUTH_FAILED, BAD_PASSPHRASE];
+        if codes.contains(&e.message.as_str()) {
+            format!("jump:{}:{}", e.hop, e.message)
+        } else if e.message == shelltree_core::CANCELLED {
+            e.message
+        } else {
+            tr!("跳板机 {}：{}", "Jump host {}: {}", chain[e.hop].params.host, e.message)
+        }
+    })?;
+    for hop in &chain {
+        if !hop.save_secret {
+            continue;
+        }
+        let Some(id) = hop.host_id.as_deref() else { continue };
+        let p = &hop.params;
+        let secret = if p.auth == AuthKind::Key { &p.passphrase } else { &p.password };
         if let Some(s) = secret {
             hosts::set_secret(id, s)?;
         }
     }
     let os = c.detect_os().await;
-    let s = Arc::new(Session { conn: c, sftp: Default::default(), shells: Default::default() });
-    if let Some(old) = state.sessions.lock().unwrap().insert(session, s) {
+    let s = Arc::new(Session { conn: Arc::new(c), sftp: Default::default(), shells: Default::default(), forwards: Default::default() });
+    let old = state.sessions.lock().unwrap().insert(session, s);
+    if let Some(old) = old {
         // 重连时替换掉旧的连接
-        tauri::async_runtime::spawn(async move { old.conn.disconnect().await });
+        close_session(&state, old).await;
     }
     Ok(os)
+}
+
+#[tauri::command]
+fn auth_prompt_reply(state: State<'_, AppState>, id: u64, answers: Option<Vec<String>>) {
+    if let Some(tx) = state.prompt_waiters.lock().unwrap().remove(&id) {
+        let _ = tx.send(answers);
+    }
 }
 
 #[tauri::command]
@@ -223,17 +298,64 @@ fn hostkey_reply(state: State<'_, AppState>, id: u64, accept: bool) {
 
 #[tauri::command]
 async fn ssh_disconnect(state: State<'_, AppState>, session: String) -> CmdResult<()> {
-    let Some(s) = state.sessions.lock().unwrap().remove(&session) else { return Ok(()) };
+    let s = state.sessions.lock().unwrap().remove(&session);
+    if let Some(s) = s {
+        for t in state.transfers.lock().unwrap().iter() {
+            if t.session == session {
+                t.progress.cancelled.store(true, Ordering::Relaxed);
+            }
+        }
+        close_session(&state, s).await;
+    }
+    Ok(())
+}
+
+/// 关掉一个会话的终端和端口转发，断开连接
+async fn close_session(state: &AppState, s: Arc<Session>) {
     for id in s.shells.lock().unwrap().drain(..) {
         state.shells.lock().unwrap().remove(&id);
     }
-    for t in state.transfers.lock().unwrap().iter() {
-        if t.session == session {
-            t.progress.cancelled.store(true, Ordering::Relaxed);
-        }
+    // 端口转发里的任务拿着连接，要先停掉；等端口释放后再返回，重连时才能重新监听同一个端口
+    let forwards: Vec<_> = s.forwards.lock().unwrap().drain(..).collect();
+    for f in forwards {
+        f.forward.stop().await;
     }
     s.conn.disconnect().await;
+}
+
+/// 开启一个端口转发
+#[tauri::command]
+async fn forward_start(state: State<'_, AppState>, session: String, rule: ForwardRule) -> CmdResult<ForwardInfo> {
+    let s = state.session(&session)?;
+    let forward = forward::start(s.conn.clone(), &rule).await?;
+    let id = state.id();
+    let info = ForwardInfo { id, rule: rule.clone(), port: forward.port, active: 0 };
+    s.forwards.lock().unwrap().push(RunningForward { id, rule, forward });
+    Ok(info)
+}
+
+#[tauri::command]
+async fn forward_stop(state: State<'_, AppState>, session: String, id: u64) -> CmdResult<()> {
+    let s = state.session(&session)?;
+    let f = {
+        let mut list = s.forwards.lock().unwrap();
+        list.iter().position(|f| f.id == id).map(|i| list.remove(i))
+    };
+    if let Some(f) = f {
+        f.forward.stop().await;
+    }
     Ok(())
+}
+
+#[tauri::command]
+fn forwards_list(state: State<'_, AppState>, session: String) -> Vec<ForwardInfo> {
+    let Ok(s) = state.session(&session) else { return vec![] };
+    s.forwards
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|f| ForwardInfo { id: f.id, rule: f.rule.clone(), port: f.forward.port, active: f.forward.active() })
+        .collect()
 }
 
 #[tauri::command]
@@ -494,10 +616,13 @@ pub fn run() {
                 sessions: Default::default(),
                 shells: Default::default(),
                 hostkey_waiters: Default::default(),
+                prompt_waiters: Default::default(),
+                edits: Default::default(),
                 transfers: Default::default(),
                 next_id: AtomicU64::new(0),
                 hosts: HostStore::new(&dir),
             });
+            edit::start_watcher(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -506,7 +631,14 @@ pub fn run() {
             host_secret_set,
             ssh_connect,
             hostkey_reply,
+            auth_prompt_reply,
             ssh_disconnect,
+            forward_start,
+            forward_stop,
+            forwards_list,
+            edit::edit_open,
+            edit::edit_upload,
+            edit::edit_forget,
             shell_open,
             shell_write,
             shell_resize,

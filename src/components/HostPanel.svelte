@@ -8,7 +8,9 @@
   import KeyRound from "@lucide/svelte/icons/key-round";
   import Tag from "@lucide/svelte/icons/tag";
   import Layers from "@lucide/svelte/icons/layers";
-  import type { Host } from "../lib/api";
+  import Route from "@lucide/svelte/icons/route";
+  import Plus from "@lucide/svelte/icons/plus";
+  import type { ForwardKind, ForwardRule, Host } from "../lib/api";
   import { app, deleteHost, openSession, toast, upsertHost } from "../lib/store.svelte";
   import HostIcon from "./HostIcon.svelte";
 
@@ -19,6 +21,13 @@
   let addrEl = $state<HTMLInputElement>();
   let editingId = $state("");
   let lastSeen: Host | null = null;
+  /** 跳板机输入框里显示名字，保存时换回 id，主机改名后也不会断 */
+  let jumpText = $state("");
+  type Row = { kind: ForwardKind; bind: string; dest: string };
+  let rows = $state<Row[]>([]);
+
+  const hostName = (x: Host) => x.name || `${x.user}@${x.host}`;
+  const fmtAddr = (host: string, port: number) => (host ? `${host.includes(":") ? `[${host}]` : host}:${port}` : String(port));
 
   $effect(() => {
     const e = app.editing;
@@ -28,11 +37,64 @@
     secret = "";
     portText = String(e.port || 22);
     editingId = e.id;
+    jumpText = (e.jump ?? "")
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean)
+      .map((r) => {
+        const x = app.hosts.find((x) => x.id === r);
+        return x ? hostName(x) : r;
+      })
+      .join(", ");
+    rows = (e.forwards ?? []).map((f) => ({
+      kind: f.kind,
+      bind: fmtAddr(f.bind_host, f.bind_port),
+      dest: f.kind === "dynamic" ? "" : fmtAddr(f.dest_host, f.dest_port),
+    }));
     if (!e.id) queueMicrotask(() => addrEl?.focus());
   });
 
   const isNew = $derived(!editingId);
   const groups = $derived(app.groups);
+  const jumpChoices = $derived([...app.hosts, ...app.sshConfig].filter((x) => x.id !== editingId));
+
+  /** “8080”、“0.0.0.0:8080”、“[::1]:8080” */
+  function parseAddr(s: string, needHost: boolean): { host: string; port: number } | null {
+    const m = /^(?:(\[[^\]]+\]|[^:\s]+):)?(\d+)$/.exec(s.trim());
+    if (!m) return null;
+    const port = Number(m[2]);
+    const host = (m[1] ?? "").replace(/^\[|\]$/g, "");
+    if (port > 65535 || (needHost && !host)) return null;
+    return { host, port };
+  }
+
+  function parseRows(): ForwardRule[] | null {
+    const out: ForwardRule[] = [];
+    for (const r of rows) {
+      if (!r.bind.trim() && !r.dest.trim()) continue;
+      const bind = parseAddr(r.bind, false);
+      if (!bind) {
+        toast(t("端口转发的监听端口不正确：{0}", r.bind), "error");
+        return null;
+      }
+      const dest = r.kind === "dynamic" ? { host: "", port: 0 } : parseAddr(r.dest, true);
+      if (!dest || (r.kind !== "dynamic" && !dest.port)) {
+        toast(t("端口转发的目标地址不正确，格式是 主机:端口"), "error");
+        return null;
+      }
+      out.push({ kind: r.kind, bind_host: bind.host, bind_port: bind.port, dest_host: dest.host, dest_port: dest.port });
+    }
+    return out;
+  }
+
+  function jumpRefs() {
+    return jumpText
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean)
+      .map((r) => app.hosts.find((x) => hostName(x) === r && x.id !== editingId)?.id ?? r)
+      .join(",");
+  }
 
   async function pickKey() {
     const f = await openDialog({ title: t("选择私钥文件"), multiple: false, directory: false });
@@ -49,7 +111,11 @@
     }
     if (!Number.isInteger(port) || port < 1 || port > 65535) return toast(t("端口不正确"), "error");
     if (h.auth === "key" && !h.key_path.trim()) return toast(t("请选择私钥文件"), "error");
+    const forwards = parseRows();
+    if (!forwards) return;
     h.port = port;
+    h.forwards = forwards;
+    h.jump = jumpRefs();
     const changed = secret !== "" || !h.save_password;
     const saved = await upsertHost($state.snapshot(h), changed ? secret || null : undefined);
     app.editing = null;
@@ -141,6 +207,43 @@
         />
       </label>
       <label class="check"><input type="checkbox" bind:checked={h.save_password} /> {t("记住密码（保存在系统钥匙串）")}</label>
+    </section>
+
+    <section>
+      <div class="label">{t("跳板机")}</div>
+      <label class="field">
+        <Route size={15} />
+        <input bind:value={jumpText} list="hp-jumps" placeholder={t("不经过跳板机")} spellcheck="false" />
+      </label>
+      <datalist id="hp-jumps">
+        {#each jumpChoices as x (x.id)}<option value={hostName(x)}>{x.user}@{x.host}</option>{/each}
+      </datalist>
+      <div class="hint">{t("先登录这台主机，再通过它连接目标主机（ssh -J）。可以选已保存的主机，也可以直接写 user@host:port，多台用逗号隔开")}</div>
+    </section>
+
+    <section>
+      <div class="label">{t("端口转发")}</div>
+      {#each rows as r, i (i)}
+        <div class="fwd">
+          <select bind:value={r.kind}>
+            <option value="local">{t("本地")}</option>
+            <option value="remote">{t("远程")}</option>
+            <option value="dynamic">SOCKS</option>
+          </select>
+          <input class="bind" bind:value={r.bind} placeholder={r.kind === "remote" ? t("服务器端口") : t("本机端口")} spellcheck="false" />
+          {#if r.kind !== "dynamic"}
+            <span class="arrow">→</span>
+            <input class="dest" bind:value={r.dest} placeholder={r.kind === "remote" ? "localhost:3000" : "127.0.0.1:3306"} spellcheck="false" />
+          {:else}
+            <span class="dyn">{t("SOCKS5 代理")}</span>
+          {/if}
+          <button class="icon small" title={t("删除")} onclick={() => rows.splice(i, 1)}><X size={14} /></button>
+        </div>
+      {/each}
+      <button class="add" onclick={() => rows.push({ kind: "local", bind: "", dest: "" })}><Plus size={14} /> {t("添加端口转发")}</button>
+      <div class="hint">
+        {t("本地：访问本机端口相当于从服务器访问目标地址，例如把服务器上的数据库映射到本机。远程：服务器上的端口转到本机能访问的地址。SOCKS：本机开一个代理，经服务器上网。连接后自动开启")}
+      </div>
     </section>
   </div>
 
@@ -294,6 +397,57 @@
     background: var(--accent);
     color: #fff;
     font-weight: 600;
+  }
+  .hint {
+    color: var(--text-faint);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .fwd {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .fwd select {
+    width: 68px;
+    height: 32px;
+    flex-shrink: 0;
+  }
+  .fwd input {
+    min-width: 0;
+    height: 32px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .fwd .bind {
+    width: 74px;
+    flex-shrink: 0;
+  }
+  .fwd .dest {
+    flex: 1;
+  }
+  .fwd .dyn {
+    flex: 1;
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+  .arrow {
+    color: var(--text-faint);
+  }
+  .icon.small {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 30px;
+    border-style: dashed;
+    color: var(--text-dim);
+    font-size: 12px;
   }
   .check {
     display: flex;

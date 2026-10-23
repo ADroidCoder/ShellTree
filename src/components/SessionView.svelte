@@ -4,9 +4,11 @@
   import RotateCw from "@lucide/svelte/icons/rotate-cw";
   import Unplug from "@lucide/svelte/icons/unplug";
   import Braces from "@lucide/svelte/icons/braces";
+  import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
   import { app, closeTab, connectTab, type Tab } from "../lib/store.svelte";
   import SftpPanel from "./SftpPanel.svelte";
   import SnippetsSide from "./SnippetsSide.svelte";
+  import ForwardsSide from "./ForwardsSide.svelte";
   import Terminal from "./Terminal.svelte";
 
   let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -44,7 +46,7 @@
     toggle("snippets");
   }
 
-  function toggle(p: "files" | "snippets") {
+  function toggle(p: "files" | "snippets" | "forwards") {
     tab.side = tab.side === p ? null : p;
     if (p === "files") filesMounted = true;
     if (!tab.side) terminal?.focus();
@@ -81,6 +83,11 @@
       <SnippetsSide onRun={(cmd) => terminal?.run(cmd)} onInsert={(text) => terminal?.insert(text)} />
     </div>
   {/if}
+  {#if tab.side === "forwards"}
+    <div class="files" style="width:{Math.min(width, 380)}px">
+      <ForwardsSide {tab} />
+    </div>
+  {/if}
   <div class="rail">
     <button class:on={tab.side === "files"} onclick={toggleFiles} title={t("文件（⌘E）")}>
       <FolderOpen size={18} />
@@ -88,6 +95,10 @@
     </button>
     <button class:on={tab.side === "snippets"} onclick={toggleSnippets} title={t("命令片段（⌘J）")}>
       <Braces size={18} />
+    </button>
+    <button class:on={tab.side === "forwards"} onclick={() => toggle("forwards")} title={t("端口转发")}>
+      <ArrowLeftRight size={17} />
+      {#if tab.forwards.length}<span class="badge">{tab.forwards.length}</span>{/if}
     </button>
     <span class="fill"></span>
     <button onclick={() => connectTab(tab)} title={t("重新连接")} disabled={tab.status === "connecting"}><RotateCw size={17} /></button>

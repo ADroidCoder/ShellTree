@@ -115,10 +115,15 @@
         };
   }
 
+  let opened = false;
+
   async function openShell() {
     if (shellId) api.shellClose(shellId).catch(() => {});
     shellId = 0;
-    term.reset();
+    // 重连时保留之前的输出，只退出全屏程序的画面、恢复终端模式
+    if (opened) term.write("\x1b[?1049l\x1b[!p\x1b[0m\r\n");
+    else term.reset();
+    opened = true;
     cmdline.reset();
     ghost = null;
     // 输出可能在 shellOpen 返回之前就到了，那时还不知道 id，先记着
@@ -137,9 +142,10 @@
         (status) => {
           if (shellId !== id) return;
           shellId = 0;
-          const why = status === null ? t("连接已断开") : t("会话已结束（退出码 {0}）", status);
-          term.write(`\r\n\x1b[2m${t("{0}，按回车重新连接", why)}\x1b[0m\r\n`);
-          onShellExit(tab);
+          const msg =
+            status === null ? t("连接已断开，正在自动重连…（按回车立即重连）") : t("会话已结束（退出码 {0}），按回车重新连接", status);
+          term.write(`\r\n\x1b[2m${msg}\x1b[0m\r\n`);
+          onShellExit(tab, status === null);
         },
       );
       shellId = id;

@@ -17,6 +17,7 @@
   import { api, type Entry } from "../lib/api";
   import { beginDrag, drag, registerPane, type DragPayload } from "../lib/drag.svelte";
   import type { FileSource } from "../lib/fs";
+  import { settings } from "../lib/settings.svelte";
   import { app, ask, confirm, toast, watchTransfers } from "../lib/store.svelte";
   import { formatDate, formatPerm, formatSize, modKey, shellQuote, uid } from "../lib/util";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
@@ -155,9 +156,24 @@
   function openEntry(e: Entry) {
     if (e.is_dir) load(source.join(path, e.name));
     else if (!source.remote) openPath(source.join(path, e.name)).catch((err) => toast(String(err), "error"));
+    else if (editable(e)) edit(e);
     else {
       const p = peer?.();
       sendTo([e], p && !p.source.remote ? p.dir : undefined);
+    }
+  }
+
+  /** 压缩包、图片这类一看就不是文本的，双击时还是下载 */
+  const BINARY = /\.(zip|gz|tgz|bz2|xz|zst|7z|rar|tar|jar|war|png|jpe?g|gif|webp|ico|bmp|pdf|mp[34]|mov|avi|mkv|iso|img|bin|so|o|a|exe|dll|dylib|class|pyc|db|sqlite)$/i;
+  const editable = (e: Entry) => !e.is_dir && e.size <= 20 * 1024 * 1024 && !BINARY.test(e.name);
+
+  /** 用本机编辑器打开远程文件，保存后自动传回 */
+  async function edit(e: Entry) {
+    try {
+      await api.editOpen(source.key, source.join(path, e.name), settings.editor || null);
+      toast(t("已用编辑器打开 {0}，保存后会自动上传", e.name));
+    } catch (err) {
+      toast(String(err), "error");
     }
   }
 
@@ -326,7 +342,8 @@
     const other = peer?.();
     const items: MenuItem[] = [];
     if (sel.length) {
-      items.push({ label: one?.is_dir ? t("打开") : source.remote ? t("下载") : t("用默认程序打开"), action: () => openEntry(one ?? sel[0]) });
+      if (one && !one.is_dir && source.remote) items.push({ label: t("编辑"), action: () => edit(one) });
+      else items.push({ label: one?.is_dir ? t("打开") : t("用默认程序打开"), action: () => openEntry(one ?? sel[0]) });
       if (other && other.source.remote !== source.remote) {
         items.push({
           label: source.remote ? t("下载到左侧文件夹") : t("上传到右侧文件夹"),
@@ -335,7 +352,7 @@
         });
       }
       if (source.remote) {
-        if (!one || one.is_dir) items.push({ label: t("下载"), action: () => sendTo(sel) });
+        items.push({ label: t("下载"), action: () => sendTo(sel) });
         items.push({ label: t("下载到…"), action: () => sendTo(sel, undefined, true) });
       }
       items.push("sep");
