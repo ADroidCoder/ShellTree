@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/shelltree-core", "src-tauri"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net"] }
+
+# 开发模式下也优化依赖，否则加解密和传输会很慢
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
