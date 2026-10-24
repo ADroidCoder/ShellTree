@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { activate, activeTab, app, closeTab, loadHosts, newHost, showHosts, startListeners } from "./lib/store.svelte";
+  import { activate, activeTab, app, loadHosts, newHost, openLocal, showHosts, startListeners } from "./lib/store.svelte";
   import { applyTheme, watchSystemTheme } from "./lib/settings.svelte";
   import { syncBackendLang } from "./lib/i18n.svelte";
   import { isMac } from "./lib/util";
@@ -48,9 +48,15 @@
       app.page = "hosts";
       app.editing = newHost();
     }
-    else if (key === "w" && tab) closeTab(tab);
+    else if (key === "w" && tab) views[tab.key]?.closeFocused();
+    else if (key === "l") openLocal();
+    else if (key === "b" && tab) tab.broadcast = !tab.broadcast;
+    // 上下分屏：macOS 上 ⇧⌘D，Windows 上 Shift 已经被占了，用 Ctrl+Alt+Shift+D
+    else if (key === "d" && tab) views[tab.key]?.split((isMac ? e.shiftKey : e.altKey) ? "col" : "row");
+    else if ((e.code === "BracketLeft" || e.code === "BracketRight") && tab) views[tab.key]?.cycle(e.code === "BracketLeft" ? -1 : 1);
     else if (key === "e" && tab) views[tab.key]?.toggleFiles();
     else if (key === "j" && tab) views[tab.key]?.toggleSnippets();
+    else if (key === "f" && tab) views[tab.key]?.find();
     else if (/^[1-9]$/.test(e.key) && app.tabs[Number(e.key) - 1]) activate(app.tabs[Number(e.key) - 1]);
     else return;
     e.preventDefault();
@@ -79,7 +85,12 @@
 
 <div class="toasts">
   {#each app.toasts as t (t.id)}
-    <div class="toast {t.kind}">{t.text}</div>
+    <div class="toast {t.kind}">
+      {t.text}
+      {#if t.button}
+        <button class="link" onclick={t.button.action}>{t.button.label}</button>
+      {/if}
+    </div>
   {/each}
 </div>
 {#if app.hostKeys.length}
@@ -133,6 +144,17 @@
     max-height: 240px;
     overflow: auto;
     user-select: text;
+  }
+  .toast .link {
+    margin-left: 10px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+  }
+  .toast .link:hover {
+    text-decoration: underline;
   }
   .toast.error {
     border-left-color: var(--del);

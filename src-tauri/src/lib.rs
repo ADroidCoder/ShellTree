@@ -7,9 +7,10 @@ use shelltree_core::hosts::{self, Host, HostStore};
 use shelltree_core::{AUTH_FAILED, BAD_PASSPHRASE, NEED_PASSPHRASE, NEED_PASSWORD, known_hosts, local, tr};
 use shelltree_core::russh_sftp::client::SftpSession;
 use shelltree_core::sftp::{self, Entry, Progress};
+use shelltree_core::log::SessionLog;
 use shelltree_core::shell::Shell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -56,6 +57,8 @@ enum TransferState {
 struct Transfer {
     id: u64,
     session: String,
+    /// 服务器之间复制时的源会话（session 是目标会话，upload 为 true）
+    from: Option<String>,
     upload: bool,
     name: String,
     /// 上传时是远程文件夹，下载时是本地文件夹
@@ -71,6 +74,7 @@ struct Transfer {
 struct TransferInfo {
     id: u64,
     session: String,
+    from: Option<String>,
     upload: bool,
     name: String,
     dest: String,
@@ -301,7 +305,7 @@ async fn ssh_disconnect(state: State<'_, AppState>, session: String) -> CmdResul
     let s = state.sessions.lock().unwrap().remove(&session);
     if let Some(s) = s {
         for t in state.transfers.lock().unwrap().iter() {
-            if t.session == session {
+            if t.session == session || t.from.as_ref() == Some(&session) {
                 t.progress.cancelled.store(true, Ordering::Relaxed);
             }
         }
@@ -347,6 +351,12 @@ async fn forward_stop(state: State<'_, AppState>, session: String, id: u64) -> C
     Ok(())
 }
 
+/// 读一次服务器状态（CPU、内存、网络、磁盘），不是 Linux 时返回 None
+#[tauri::command]
+async fn server_stats(state: State<'_, AppState>, session: String) -> CmdResult<Option<shelltree_core::stats::Sample>> {
+    Ok(state.session(&session)?.conn.stats().await)
+}
+
 #[tauri::command]
 fn forwards_list(state: State<'_, AppState>, session: String) -> Vec<ForwardInfo> {
     let Ok(s) = state.session(&session) else { return vec![] };
@@ -358,16 +368,34 @@ fn forwards_list(state: State<'_, AppState>, session: String) -> Vec<ForwardInfo
         .collect()
 }
 
+/// 会话日志写到哪里。`note` 写在开头（主机和时间），`append` 为 false 时清空原文件
+#[derive(Deserialize)]
+struct LogStart {
+    path: String,
+    note: String,
+    append: bool,
+}
+
+#[derive(Serialize)]
+struct ShellOpened {
+    id: u64,
+    /// 日志文件打不开时的原因，终端照常打开
+    log_error: Option<String>,
+}
+
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn shell_open(
     state: State<'_, AppState>,
     session: String,
     cols: u32,
     rows: u32,
+    log: Option<LogStart>,
     on_data: Channel<InvokeResponseBody>,
     on_exit: Channel<Option<u32>>,
-) -> CmdResult<u64> {
+) -> CmdResult<ShellOpened> {
     let s = state.session(&session)?;
+    let (log, log_error) = open_log(log);
     // 输出直接以二进制发给界面，不转成 JSON
     let sh = Shell::open(
         &s.conn,
@@ -381,10 +409,56 @@ async fn shell_open(
         },
     )
     .await?;
+    sh.set_log(log);
     let id = state.id();
     state.shells.lock().unwrap().insert(id, Arc::new(sh));
     s.shells.lock().unwrap().push(id);
-    Ok(id)
+    Ok(ShellOpened { id, log_error })
+}
+
+/// 打开本机的终端（要是 async：同步命令在主线程上跑，没有 tokio 运行时）
+#[tauri::command]
+async fn local_shell_open(
+    state: State<'_, AppState>,
+    cols: u32,
+    rows: u32,
+    log: Option<LogStart>,
+    on_data: Channel<InvokeResponseBody>,
+    on_exit: Channel<Option<u32>>,
+) -> CmdResult<ShellOpened> {
+    let (log, log_error) = open_log(log);
+    let sh = Shell::open_local(
+        cols,
+        rows,
+        move |data| {
+            let _ = on_data.send(InvokeResponseBody::Raw(data));
+        },
+        move |status| {
+            let _ = on_exit.send(status);
+        },
+    )?;
+    sh.set_log(log);
+    let id = state.id();
+    state.shells.lock().unwrap().insert(id, Arc::new(sh));
+    Ok(ShellOpened { id, log_error })
+}
+
+/// 打开日志文件，打不开时终端照常打开，返回原因
+fn open_log(log: Option<LogStart>) -> (Option<SessionLog>, Option<String>) {
+    match log.map(|l| SessionLog::open(Path::new(&l.path), l.append, &l.note)) {
+        Some(Ok(l)) => (Some(l), None),
+        Some(Err(e)) => (None, Some(e)),
+        None => (None, None),
+    }
+}
+
+/// 开始（log 不为空）或停止记录会话日志
+#[tauri::command]
+fn shell_log(state: State<'_, AppState>, id: u64, log: Option<LogStart>) -> CmdResult<()> {
+    let sh = state.shell(id)?;
+    let log = log.map(|l| SessionLog::open(Path::new(&l.path), l.append, &l.note)).transpose()?;
+    sh.set_log(log);
+    Ok(())
 }
 
 #[tauri::command]
@@ -469,6 +543,7 @@ async fn transfer_start(
         state.transfers.lock().unwrap().push(Transfer {
             id,
             session: session.clone(),
+            from: None,
             upload,
             name,
             dest: dest.clone(),
@@ -485,19 +560,63 @@ async fn transfer_start(
             } else {
                 sftp::download(sftp, src.path, src.is_dir, PathBuf::from(dest), progress.clone()).await
             };
-            let state = app.state::<AppState>();
-            let mut list = state.transfers.lock().unwrap();
-            if let Some(t) = list.iter_mut().find(|t| t.id == id) {
-                t.elapsed_ms = t.started.elapsed().as_millis() as u64;
-                t.state = match &r {
-                    Ok(()) => TransferState::Done,
-                    Err(e) if e == sftp::CANCELLED => TransferState::Cancelled,
-                    Err(_) => TransferState::Failed,
-                };
-                t.error = r.err().filter(|e| e != sftp::CANCELLED);
-            }
-            drop(list);
-            let _ = app.emit("transfer-finished", id);
+            transfer_finished(&app, id, r);
+        });
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+fn transfer_finished(app: &AppHandle, id: u64, r: CmdResult<()>) {
+    let state = app.state::<AppState>();
+    let mut list = state.transfers.lock().unwrap();
+    if let Some(t) = list.iter_mut().find(|t| t.id == id) {
+        t.elapsed_ms = t.started.elapsed().as_millis() as u64;
+        t.state = match &r {
+            Ok(()) => TransferState::Done,
+            Err(e) if e == sftp::CANCELLED => TransferState::Cancelled,
+            Err(_) => TransferState::Failed,
+        };
+        t.error = r.err().filter(|e| e != sftp::CANCELLED);
+    }
+    drop(list);
+    let _ = app.emit("transfer-finished", id);
+}
+
+/// 从一台服务器复制到另一台服务器的文件夹里，每个来源一个任务
+#[tauri::command]
+async fn transfer_copy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    from: String,
+    sources: Vec<Source>,
+    session: String,
+    dest: String,
+) -> CmdResult<Vec<u64>> {
+    let src = state.sftp(&from).await?;
+    let dst = state.sftp(&session).await?;
+    let mut ids = Vec::new();
+    for item in sources {
+        let id = state.id();
+        let progress = Arc::new(Progress::default());
+        let name = item.path.trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
+        state.transfers.lock().unwrap().push(Transfer {
+            id,
+            session: session.clone(),
+            from: Some(from.clone()),
+            upload: true,
+            name,
+            dest: dest.clone(),
+            progress: progress.clone(),
+            state: TransferState::Running,
+            error: None,
+            started: Instant::now(),
+            elapsed_ms: 0,
+        });
+        let (src, dst, dest, app) = (src.clone(), dst.clone(), dest.clone(), app.clone());
+        tauri::async_runtime::spawn(async move {
+            let r = sftp::copy(src, item.path, item.is_dir, dst, dest, progress).await;
+            transfer_finished(&app, id, r);
         });
         ids.push(id);
     }
@@ -516,6 +635,7 @@ fn transfers_list(state: State<'_, AppState>) -> Vec<TransferInfo> {
             TransferInfo {
                 id: t.id,
                 session: t.session.clone(),
+                from: t.from.clone(),
                 upload: t.upload,
                 name: t.name.clone(),
                 dest: t.dest.clone(),
@@ -636,6 +756,7 @@ pub fn run() {
             forward_start,
             forward_stop,
             forwards_list,
+            server_stats,
             edit::edit_open,
             edit::edit_upload,
             edit::edit_forget,
@@ -644,6 +765,8 @@ pub fn run() {
             shell_resize,
             shell_ack,
             shell_close,
+            shell_log,
+            local_shell_open,
             sftp_home,
             sftp_list,
             sftp_mkdir,
@@ -651,6 +774,7 @@ pub fn run() {
             sftp_remove,
             sftp_chmod,
             transfer_start,
+            transfer_copy,
             transfers_list,
             transfer_cancel,
             transfers_clear,

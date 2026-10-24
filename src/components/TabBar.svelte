@@ -4,10 +4,12 @@
   import FolderSync from "@lucide/svelte/icons/folder-sync";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import Plus from "@lucide/svelte/icons/plus";
+  import Terminal from "@lucide/svelte/icons/terminal";
+  import Radio from "@lucide/svelte/icons/radio";
   import X from "@lucide/svelte/icons/x";
   import ArrowUpCircle from "@lucide/svelte/icons/circle-arrow-up";
   import { updater } from "../lib/updater.svelte";
-  import { activate, app, closeTab, showHosts, showSftp } from "../lib/store.svelte";
+  import { activate, app, closeTab, openLocal, showHosts, showSftp } from "../lib/store.svelte";
   import { isMac } from "../lib/util";
 
   let { onNew }: { onNew: () => void } = $props();
@@ -32,11 +34,13 @@
       role="tab"
       tabindex="-1"
       aria-selected={tb.key === app.activeKey}
-      title="{tb.host.user}@{tb.host.host}:{tb.host.port} · {t(statusText[tb.status])}"
+      title={tb.local ? t("本地终端") : `${tb.host.user}@${tb.host.host}:${tb.host.port} · ${t(statusText[tb.status])}`}
       onclick={() => activate(tb)}
       onauxclick={(e) => e.button === 1 && closeTab(tb)}
     >
-      <span class="ico {tb.status}"><SquareTerminal size={15} /></span>
+      <span class="ico {tb.status}" class:bcast={tb.broadcast}>
+        {#if tb.broadcast}<Radio size={15} />{:else if tb.local}<Terminal size={15} />{:else}<SquareTerminal size={15} />{/if}
+      </span>
       <span class="name">{tb.title}</span>
       <button
         class="close"
@@ -49,6 +53,7 @@
     </div>
   {/each}
   <button class="add" title={t("新建连接")} onclick={onNew}><Plus size={16} /></button>
+  <button class="add" title={isMac ? t("本地终端（⌘L）") : t("本地终端（Ctrl+Shift+L）")} onclick={openLocal}><Terminal size={15} /></button>
   <div class="fill" data-tauri-drag-region></div>
   {#if updater.update}
     <button class="update" onclick={() => (updater.open = true)} title={t("查看更新内容并安装")}>
@@ -121,6 +126,9 @@
   .ico.error,
   .ico.disconnected {
     color: var(--del);
+  }
+  .ico.bcast {
+    color: var(--warn);
   }
   @keyframes blink {
     50% {

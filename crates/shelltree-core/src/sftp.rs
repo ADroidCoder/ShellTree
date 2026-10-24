@@ -193,6 +193,30 @@ struct Job {
     size: u64,
 }
 
+/// 远程到远程的一个文件：源路径、目标路径、大小、权限
+struct CopyJob {
+    from: String,
+    to: String,
+    size: u64,
+    perm: u32,
+}
+
+trait HasSize {
+    fn size(&self) -> u64;
+}
+
+impl HasSize for Job {
+    fn size(&self) -> u64 {
+        self.size
+    }
+}
+
+impl HasSize for CopyJob {
+    fn size(&self) -> u64 {
+        self.size
+    }
+}
+
 fn file_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
@@ -349,6 +373,88 @@ async fn download_file(s: &SftpSession, job: &Job, p: &Progress) -> Result<()> {
     r
 }
 
+/// 把一台服务器上的文件或文件夹复制到另一台服务器的 `dest_dir` 里。
+/// 数据从源服务器读出来直接写到目标服务器，经过本机内存，不落本地磁盘
+pub async fn copy(
+    src: Arc<SftpSession>,
+    from: String,
+    is_dir: bool,
+    dst: Arc<SftpSession>,
+    dest_dir: String,
+    p: Arc<Progress>,
+) -> Result<()> {
+    let name = from.trim_end_matches('/').rsplit('/').next().unwrap_or("copy").to_string();
+    let target = join(&dest_dir, &name);
+    let mut jobs = Vec::new();
+    if is_dir {
+        let mut dirs = vec![(from.clone(), target.clone())];
+        let mut i = 0;
+        while i < dirs.len() {
+            p.check()?;
+            let (sdir, ddir) = dirs[i].clone();
+            if let Err(e) = dst.create_dir(&ddir).await
+                && !dst.metadata(&ddir).await.map(|m| m.is_dir()).unwrap_or(false)
+            {
+                return Err(tr!("创建文件夹 {ddir} 失败：{}", "Couldn't create folder {ddir}: {}", describe(e)));
+            }
+            for e in src.read_dir(&sdir).await.map_err(describe)? {
+                let n = e.file_name();
+                if n == "." || n == ".." {
+                    continue;
+                }
+                let m = e.metadata();
+                if m.is_dir() {
+                    dirs.push((join(&sdir, &n), join(&ddir, &n)));
+                } else if m.is_regular() {
+                    jobs.push(CopyJob { from: join(&sdir, &n), to: join(&ddir, &n), size: m.size.unwrap_or(0), perm: m.permissions.unwrap_or(0) });
+                }
+            }
+            i += 1;
+        }
+    } else {
+        let m = src.metadata(&from).await.map_err(describe)?;
+        jobs.push(CopyJob { from, to: target, size: m.size.unwrap_or(0), perm: m.permissions.unwrap_or(0) });
+    }
+    run_jobs(jobs, p, move |job, p| {
+        let (src, dst) = (src.clone(), dst.clone());
+        async move { copy_file(&src, &dst, &job, &p).await }
+    })
+    .await
+}
+
+async fn copy_file(src: &SftpSession, dst: &SftpSession, job: &CopyJob, p: &Progress) -> Result<()> {
+    p.set_current(job.from.rsplit('/').next().unwrap_or(""));
+    let mut r = src.open(&job.from).await.map_err(|e| tr!("打开 {} 失败：{}", "Couldn't open {}: {}", job.from, describe(e)))?;
+    let mut w = dst
+        .open_with_flags(&job.to, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| tr!("创建 {} 失败：{}", "Couldn't create {}: {}", job.to, describe(e)))?;
+    let mut buf = vec![0u8; CHUNK];
+    let res: Result<()> = async {
+        loop {
+            p.check()?;
+            let n = r.read(&mut buf).await.map_err(|e| tr!("读取 {} 失败：{e}", "Couldn't read {}: {e}", job.from))?;
+            if n == 0 {
+                break;
+            }
+            w.write_all(&buf[..n]).await.map_err(|e| tr!("写入 {} 失败：{e}", "Couldn't write {}: {e}", job.to))?;
+            p.done.fetch_add(n as u64, Ordering::Relaxed);
+        }
+        w.shutdown().await.map_err(|e| tr!("写入 {} 失败：{e}", "Couldn't write {}: {e}", job.to))
+    }
+    .await;
+    if res.is_err() {
+        drop(w);
+        let _ = dst.remove_file(&job.to).await;
+        return res;
+    }
+    // 权限和源文件一样（脚本复制过去还能执行）
+    if job.perm & 0o7777 != 0 {
+        let _ = chmod(dst, &job.to, job.perm & 0o7777).await;
+    }
+    Ok(())
+}
+
 /// 本地已经有同名文件时改成“名字 (1).扩展名”，和浏览器下载一样，不覆盖已有文件
 fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let p = dir.join(name);
@@ -366,12 +472,12 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
 }
 
 /// 同时执行几个文件的传输；有一个失败就取消其余的
-async fn run_jobs<F, Fut>(jobs: Vec<Job>, p: Arc<Progress>, run: F) -> Result<()>
+async fn run_jobs<J: HasSize, F, Fut>(jobs: Vec<J>, p: Arc<Progress>, run: F) -> Result<()>
 where
-    F: Fn(Job, Arc<Progress>) -> Fut,
+    F: Fn(J, Arc<Progress>) -> Fut,
     Fut: Future<Output = Result<()>> + Send + 'static,
 {
-    p.total.store(jobs.iter().map(|j| j.size).sum(), Ordering::Relaxed);
+    p.total.store(jobs.iter().map(|j| j.size()).sum(), Ordering::Relaxed);
     p.files_total.store(jobs.len() as u64, Ordering::Relaxed);
     let mut set = JoinSet::new();
     let mut jobs = jobs.into_iter();

@@ -258,8 +258,26 @@
       } catch (err) {
         toast(String(err), "error");
       }
+    } else if (from.source.remote) {
+      // 服务器之间：经本机中转。同一台服务器的两个会话要防止复制到自己身上
+      if (from.source.server === source.server) {
+        for (const e of from.entries) {
+          const src = from.source.join(from.dir, e.name);
+          const dst = source.join(dir, e.name);
+          if (dst === src || (e.is_dir && dir.startsWith(src.replace(/\/$/, "") + "/"))) {
+            toast(t("不能把“{0}”复制到它自己里面", e.name), "error");
+            return;
+          }
+        }
+      }
+      try {
+        await api.transferCopy(from.source.key, from.entries.map((e) => ({ path: from.source.join(from.dir, e.name), is_dir: e.is_dir })), source.key, dir);
+        watchTransfers();
+      } catch (err) {
+        toast(String(err), "error");
+      }
     } else {
-      toast(from.source.remote ? t("暂不支持两台服务器之间直接传输，可以先下载到本地") : t("本地之间的复制请用系统的文件管理器"), "error");
+      toast(t("本地之间的复制请用系统的文件管理器"), "error");
     }
   }
 

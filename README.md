@@ -67,6 +67,12 @@ Get the latest installer from the [**Releases page**](https://github.com/ADroidC
 - **History suggestions** — as you type, a gray suggestion from commands you've run on this host appears; press → or End to accept (like fish or zsh-autosuggestions). Passwords are never recorded, suggestions are off inside full-screen apps like vim or top, and history stays on your computer — clear it any time.
 - **Snippets** — save frequently used commands and insert or run them from the snippet panel next to the terminal. Use `{{variables}}` to fill in values each time.
 - **Session tabs** — one tab per session with a status color.
+- **Split panes** — split a tab left/right or top/bottom (⌘D / ⇧⌘D). Each pane is its own shell on the same connection; drag the divider to resize and use ⌘[ / ⌘] to switch.
+- **Broadcast input** — turn on broadcast (⌘B) in several tabs and whatever you type in one goes to all of them, handy for running the same commands on many servers.
+- **Local terminal** — open a shell on your own computer (⌘L): your default shell on macOS, PowerShell on Windows.
+- **Find in terminal** — ⌘F searches the output, with match-case and regex options.
+- **Server status bar** — CPU, memory, disk, network and load below the terminal, read over the same connection with nothing to install (Linux only, can be turned off in Settings).
+- **Session logs** — "Record session log" in the context menu saves the output as plain text (colors and control codes stripped) and keeps writing after a reconnect.
 - **Auto-reconnect** — reconnects automatically when the network drops, keeping the previous output on screen; press Enter to reconnect right away.
 - **Port forwarding** — local (`-L`, e.g. reach a database on the server from your computer), remote (`-R`) and SOCKS5 dynamic (`-D`). Configure them per host to start on every connect, or add one on the fly from the panel next to the terminal. `LocalForward` and friends in `~/.ssh/config` are recognized.
 - Copy, paste and clear from the context menu. On Windows, copy/paste is Ctrl+Shift+C / V so Ctrl+C stays with the terminal.
@@ -76,7 +82,7 @@ Get the latest installer from the [**Releases page**](https://github.com/ADroidC
 <p align="center"><img src="doc/sftp.png" alt="Dual-pane SFTP" width="100%"></p>
 
 - **File panel next to the terminal** — shares the terminal's connection, so there's no second login; "Open in Terminal" `cd`s the shell into a folder.
-- **Dual-pane SFTP** — pick Local or any host for each pane, and drag files between panes to upload or download.
+- **Dual-pane SFTP** — pick Local or any host for each pane, and drag files between panes to upload or download. Between two servers, files are copied directly (relayed through memory, never written to your disk).
 - **Drag-and-drop upload** — drop files or folders from Finder / Explorer; drop onto a folder to upload into it.
 - **Transfer queue** — progress, speed, time remaining and cancel. Partial files are cleaned up on failure or cancel; downloads never overwrite a local file of the same name.
 - **Edit remote files** — double-click a text file to open it in a local editor (the system text editor by default, or VS Code etc. from Settings); saving uploads it back automatically, with a warning if the file changed on the server in the meantime.
@@ -97,10 +103,15 @@ On Windows, use Ctrl+Shift instead of ⌘ (plain Ctrl+letter is left to the term
 |---|---|
 | ⌘T | New connection (open host search) |
 | ⌘N | New host |
-| ⌘W | Close the current session |
+| ⌘W | Close the current pane, or the session if it isn't split |
+| ⌘L | Open a local terminal |
 | ⌘1 – ⌘9 | Switch to session N |
 | ⌘E | Show / hide the file panel |
 | ⌘J | Show / hide snippets |
+| ⌘F | Find in the terminal |
+| ⌘D / ⇧⌘D | Split right / down (Windows: Ctrl+Shift+D / Ctrl+Alt+Shift+D) |
+| ⌘[ / ⌘] | Previous / next pane |
+| ⌘B | Toggle broadcast input |
 | → / End | Accept the gray suggestion |
 | ⌘C / ⌘V | Terminal copy / paste (Windows: Ctrl+Shift+C / V) |
 | ⌘K | Clear the terminal |
@@ -155,7 +166,7 @@ Output:
 
 ```bash
 cargo test -p shelltree-core   # core library tests
-npm test                     # command-line detection tests (suggestions)
+npm test                     # command-line detection (suggestions) and split-pane layout tests
 cargo run -p shelltree-core --example otp   # verification-code login (starts a local test server)
 npm run check                # frontend type check
 ```
@@ -175,7 +186,9 @@ Regular pushes only run tests. Run the workflow manually from the Actions page t
 ```
 crates/shelltree-core/   Core library (UI-independent, testable on its own)
   src/conn.rs          Connecting, host key verification, login (password / key / ssh-agent)
-  src/shell.rs         Terminal channel, output batching and flow control
+  src/shell.rs         Terminals (remote shell and local pty), output batching and flow control
+  src/log.rs           Session logs (control codes stripped)
+  src/stats.rs         Server status (CPU, memory, disk, network)
   src/forward.rs       Port forwarding (local / remote / SOCKS5)
   src/sftp.rs          Remote file operations, upload and download
   src/local.rs         Local file operations (the Local pane in dual-pane SFTP)
@@ -185,6 +198,7 @@ crates/shelltree-core/   Core library (UI-independent, testable on its own)
 src-tauri/             Tauri desktop app exposing the core library to the UI
 src/                   Svelte 5 UI
   lib/cmdline.ts       Detects the command being typed in the terminal (for suggestions)
+  lib/panes.ts         Split-pane layout
 tests/                 Frontend tests
 ```
 

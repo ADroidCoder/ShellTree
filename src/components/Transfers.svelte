@@ -52,8 +52,8 @@
         {#each list as x (x.id)}
           <div class="item {x.state}">
             <div class="line">
-              <span class="dir">{x.upload ? "⬆" : "⬇"}</span>
-              <span class="name" title={t(x.upload ? "上传到 {0}" : "下载到 {0}", x.dest)}>{x.name}</span>
+              <span class="dir">{x.from ? "⇄" : x.upload ? "⬆" : "⬇"}</span>
+              <span class="name" title={t(x.from ? "复制到 {0}" : x.upload ? "上传到 {0}" : "下载到 {0}", x.dest)}>{x.name}</span>
               {#if x.state === "running"}
                 <button class="link" onclick={() => api.transferCancel(x.id)}>{t("取消")}</button>
               {:else if x.state === "done" && !x.upload}

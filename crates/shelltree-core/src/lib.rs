@@ -5,8 +5,10 @@ pub mod forward;
 pub mod hosts;
 pub mod known_hosts;
 pub mod local;
+pub mod log;
 pub mod sftp;
 pub mod shell;
+pub mod stats;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
