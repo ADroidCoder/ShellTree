@@ -16,7 +16,7 @@
   import ForwardsSide from "./ForwardsSide.svelte";
   import Terminal from "./Terminal.svelte";
   import StatusBar from "./StatusBar.svelte";
-  import { settings } from "../lib/settings.svelte";
+  import { settings, termBackground } from "../lib/settings.svelte";
 
   let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -115,7 +115,7 @@
   const running = $derived(app.transfers.filter((t) => t.session === tab.key && t.state === "running").length);
 </script>
 
-<div class="session">
+<div class="session" style="--term-bg:{termBackground()}">
   <div class="term">
     <div class="screen" bind:this={screen}>
       {#each panes as id (id)}
@@ -216,7 +216,7 @@
   .session {
     display: flex;
     height: 100%;
-    background: var(--bg-graph);
+    background: var(--term-bg);
   }
   .term {
     flex: 1;
@@ -238,7 +238,7 @@
     position: absolute;
     inset: 0;
     z-index: 3;
-    background: var(--bg-graph);
+    background: var(--term-bg);
     opacity: 0.3;
     pointer-events: none;
   }

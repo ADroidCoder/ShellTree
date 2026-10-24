@@ -50,6 +50,10 @@
     }
     else if (key === "w" && tab) views[tab.key]?.closeFocused();
     else if (key === "l") openLocal();
+    else if (key === ",") {
+      showHosts();
+      app.page = "settings";
+    }
     else if (key === "b" && tab) tab.broadcast = !tab.broadcast;
     // 上下分屏：macOS 上 ⇧⌘D，Windows 上 Shift 已经被占了，用 Ctrl+Alt+Shift+D
     else if (key === "d" && tab) views[tab.key]?.split((isMac ? e.shiftKey : e.altKey) ? "col" : "row");

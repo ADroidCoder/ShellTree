@@ -14,3 +14,7 @@ tokio.workspace = true
 # 本地终端：macOS/Linux 用 openpty，Windows 用 ConPTY
 portable-pty = "0.9"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+
+# Linux 上密码存在 Secret Service 里（GNOME 钥匙环、KWallet），不开这个特性 keyring 只存在内存里，重启就没了
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }

@@ -1,4 +1,5 @@
 export const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+export const isWindows = typeof navigator !== "undefined" && /Win/.test(navigator.platform);
 
 /** macOS 用 ⌘，其他系统用 Ctrl */
 export function modKey(e: KeyboardEvent | MouseEvent) {

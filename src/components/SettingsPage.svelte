@@ -4,10 +4,25 @@
   import Sun from "@lucide/svelte/icons/sun";
   import MonitorCog from "@lucide/svelte/icons/monitor-cog";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { setEditor, setFontSize, setStatusBar, setSuggest, setTheme, settings, type Theme } from "../lib/settings.svelte";
+  import {
+    isDark,
+    setEditor,
+    setFontFamily,
+    setFontSize,
+    setLineHeight,
+    setStatusBar,
+    setSuggest,
+    setTermTheme,
+    setTheme,
+    settings,
+    type Theme,
+  } from "../lib/settings.svelte";
+  import { GITHUB_LIGHT, ONE_DARK, THEMES } from "../lib/themes";
+  import { fontStack, installedFonts } from "../lib/fonts";
   import { clearHistory, historyCount, loadHistory } from "../lib/history";
   import { confirm, toast } from "../lib/store.svelte";
   import { onMount } from "svelte";
+  import { isMac, isWindows } from "../lib/util";
   import { checkUpdate, updater } from "../lib/updater.svelte";
 
   let count = $state(0);
@@ -22,15 +37,14 @@
     toast(t("已清除命令历史"));
   }
 
-  const isMac = navigator.userAgent.includes("Mac");
 
   async function pickEditor() {
     const f = await openDialog({
       title: t("选择编辑器"),
       multiple: false,
       directory: false,
-      defaultPath: isMac ? "/Applications" : undefined,
-      filters: isMac ? undefined : [{ name: t("程序"), extensions: ["exe", "cmd", "bat"] }],
+      defaultPath: isMac ? "/Applications" : isWindows ? undefined : "/usr/bin",
+      filters: isWindows ? [{ name: t("程序"), extensions: ["exe", "cmd", "bat"] }] : undefined,
     });
     if (typeof f === "string") setEditor(f);
   }
@@ -41,6 +55,32 @@
       .pop()
       ?.replace(/\.(app|exe|cmd|bat)$/i, "") ?? "",
   );
+
+  // 配色卡片：auto 跟着界面，用界面的背景色和对应的一套颜色
+  const schemes = $derived([
+    {
+      id: "auto",
+      name: t("跟随界面"),
+      bg: "var(--bg-graph)",
+      fg: "var(--text)",
+      colors: isDark() ? ONE_DARK : GITHUB_LIGHT,
+    },
+    ...THEMES.map((th) => ({ id: th.id, name: th.name, bg: th.colors.background!, fg: th.colors.foreground!, colors: th.colors })),
+  ]);
+
+  const current = $derived(schemes.find((sc) => sc.id === settings.termTheme) ?? schemes[0]);
+
+  const fonts = installedFonts();
+  const DEFAULT_MONO = getComputedStyle(document.documentElement).getPropertyValue("--mono").trim();
+  /** 用的是列表里没有的字体，名字自己输入 */
+  let customMode = $state(!!settings.fontFamily && !fonts.includes(settings.fontFamily));
+  let customFont = $state(settings.fontFamily);
+
+  function onFontSelect(v: string) {
+    customMode = v === "__custom";
+    if (customMode) customFont = settings.fontFamily;
+    else setFontFamily(v);
+  }
 
   const langs: { id: Lang | null; label: string }[] = [
     { id: null, label: "跟随系统" },
@@ -80,13 +120,71 @@
   </section>
 
   <section>
-    <div class="label">{t("终端字号")}</div>
-    <div class="font">
-      <button onclick={() => setFontSize(settings.fontSize - 1)}>−</button>
-      <span class="size">{settings.fontSize}</span>
-      <button onclick={() => setFontSize(settings.fontSize + 1)}>＋</button>
-      <span class="preview" style="font-size:{settings.fontSize}px">root@server:~$ ls -la</span>
+    <div class="label">{t("终端配色")}</div>
+    <div class="schemes">
+      {#each schemes as sc (sc.id)}
+        <button class="scheme" class:on={settings.termTheme === sc.id} onclick={() => setTermTheme(sc.id)}>
+          <span class="swatch" style="background:{sc.bg}; color:{sc.fg}">
+            <span class="prompt"><span style="color:{sc.colors.green}">user@host</span>:<span style="color:{sc.colors.blue}">~</span>$</span>
+            <span class="dots">
+              {#each [sc.colors.red, sc.colors.green, sc.colors.yellow, sc.colors.blue, sc.colors.magenta, sc.colors.cyan] as c, i (i)}
+                <i style="background:{c}"></i>
+              {/each}
+            </span>
+          </span>
+          <span class="sname">{sc.name}</span>
+        </button>
+      {/each}
     </div>
+  </section>
+
+  <section>
+    <div class="label">{t("终端字体")}</div>
+    <div class="rows">
+      <div class="row">
+        <span class="k">{t("字体")}</span>
+        <select value={customMode ? "__custom" : settings.fontFamily} onchange={(e) => onFontSelect((e.target as HTMLSelectElement).value)}>
+          <option value="">{t("默认")}</option>
+          {#each fonts as f (f)}
+            <option value={f}>{f}</option>
+          {/each}
+          <option value="__custom">{t("其他字体…")}</option>
+        </select>
+        {#if customMode}
+          <input
+            class="custom"
+            value={customFont}
+            placeholder={t("输入字体名称")}
+            spellcheck="false"
+            oninput={(e) => (customFont = (e.target as HTMLInputElement).value)}
+            onchange={() => setFontFamily(customFont)}
+          />
+        {/if}
+      </div>
+      <div class="row">
+        <span class="k">{t("字号")}</span>
+        <div class="font">
+          <button onclick={() => setFontSize(settings.fontSize - 1)}>−</button>
+          <span class="size">{settings.fontSize}</span>
+          <button onclick={() => setFontSize(settings.fontSize + 1)}>＋</button>
+        </div>
+      </div>
+      <div class="row">
+        <span class="k">{t("行高")}</span>
+        <div class="font">
+          <button onclick={() => setLineHeight(settings.lineHeight - 0.05)}>−</button>
+          <span class="size">{settings.lineHeight.toFixed(2)}</span>
+          <button onclick={() => setLineHeight(settings.lineHeight + 0.05)}>＋</button>
+        </div>
+      </div>
+    </div>
+    <pre
+      class="preview"
+      style="background:{current.bg}; color:{current.fg}; font-family:{fontStack(settings.fontFamily, DEFAULT_MONO)}; font-size:{settings.fontSize}px; line-height:{settings.lineHeight}"><span
+        style="color:{current.colors.green}">root@server</span>:<span style="color:{current.colors.blue}">~</span>$ ls -la
+<span style="color:{current.colors.blue}">drwxr-xr-x</span>  5 root root 4096 Oct 24 10:00 <span style="color:{current.colors.blue}">projects</span>
+-rwxr-xr-x  1 root root  220 Oct 24 10:00 <span style="color:{current.colors.green}">deploy.sh</span>
+-rw-r--r--  1 root root 3.1K Oct 24 10:00 nginx.conf  <span style="color:{current.colors.yellow}">中文 0O 1lI</span></pre>
   </section>
 
   <section>
@@ -113,7 +211,7 @@
     <div class="label">{t("编辑远程文件")}</div>
     <div class="hist">
       <span>
-        {settings.editor ? t("用 {0} 打开", editorName) : isMac ? t("用系统的文本编辑器打开") : t("用记事本打开")}
+        {settings.editor ? t("用 {0} 打开", editorName) : isMac ? t("用系统的文本编辑器打开") : isWindows ? t("用记事本打开") : t("用系统默认的程序打开")}
       </span>
       <span class="btns">
         {#if settings.editor}<button onclick={() => setEditor("")}>{t("恢复默认")}</button>{/if}
@@ -236,6 +334,70 @@
     color: var(--text-faint);
     font-size: 12px;
   }
+  .schemes {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .scheme {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    height: auto;
+    padding: 6px;
+    border-radius: 10px;
+    background: var(--input-bg);
+    text-align: left;
+  }
+  .scheme.on {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .swatch {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 9px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 400;
+    border: 1px solid rgba(128, 128, 128, 0.2);
+  }
+  .dots {
+    display: flex;
+    gap: 4px;
+  }
+  .dots i {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+  }
+  .sname {
+    padding: 0 3px 2px;
+    font-size: 12.5px;
+  }
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .row .k {
+    width: 56px;
+    color: var(--text-dim);
+  }
+  .row select {
+    min-width: 220px;
+  }
+  .custom {
+    width: 200px;
+  }
   .font {
     display: flex;
     align-items: center;
@@ -246,16 +408,16 @@
     padding: 0;
   }
   .size {
-    width: 28px;
+    width: 40px;
     text-align: center;
     font-weight: 600;
   }
   .preview {
-    margin-left: 12px;
-    padding: 6px 10px;
-    border-radius: 6px;
-    background: var(--bg-graph);
-    font-family: var(--mono);
+    margin: 14px 0 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    overflow: hidden;
+    white-space: pre;
   }
   .keys {
     display: grid;

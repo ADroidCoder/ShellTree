@@ -24,7 +24,9 @@
     type Tab,
   } from "../lib/store.svelte";
   import { leaves } from "../lib/panes";
-  import { isDark, settings } from "../lib/settings.svelte";
+  import { isDark, settings, termBackground } from "../lib/settings.svelte";
+  import { findTheme, GITHUB_LIGHT, ONE_DARK } from "../lib/themes";
+  import { fontStack } from "../lib/fonts";
   import { hostLabel, isMac } from "../lib/util";
   import { CommandLine } from "../lib/cmdline";
   import { historyKey, loadHistory, recordCommand, suggest } from "../lib/history";
@@ -182,31 +184,21 @@
   }
 
   function theme(): ITheme {
+    const chosen = findTheme(settings.termTheme);
+    if (chosen) return chosen.colors;
+    // 跟随界面：背景和界面一致，深色用 One Dark 风格，浅色用 GitHub 风格
     const dark = isDark();
-    const base: ITheme = {
+    return {
       background: cssVar("--bg-graph"),
       foreground: cssVar("--text"),
       cursor: cssVar("--accent"),
       cursorAccent: cssVar("--bg-graph"),
       selectionBackground: dark ? "rgba(77, 136, 255, 0.35)" : "rgba(47, 111, 235, 0.25)",
+      ...(dark ? ONE_DARK : GITHUB_LIGHT),
     };
-    // 深色用 One Dark 风格，浅色用 GitHub 风格
-    return dark
-      ? {
-          ...base,
-          black: "#3f4451", red: "#e05561", green: "#8cc265", yellow: "#d18f52",
-          blue: "#4aa5f0", magenta: "#c162de", cyan: "#42b3c2", white: "#d7dae0",
-          brightBlack: "#4f5666", brightRed: "#ff616e", brightGreen: "#a5e075", brightYellow: "#f0a45d",
-          brightBlue: "#4dc4ff", brightMagenta: "#de73ff", brightCyan: "#4cd1e0", brightWhite: "#e6e6e6",
-        }
-      : {
-          ...base,
-          black: "#24292f", red: "#cf222e", green: "#116329", yellow: "#4d2d00",
-          blue: "#0969da", magenta: "#8250df", cyan: "#1b7c83", white: "#6e7781",
-          brightBlack: "#57606a", brightRed: "#a40e26", brightGreen: "#1a7f37", brightYellow: "#633c01",
-          brightBlue: "#218bff", brightMagenta: "#a475f9", brightCyan: "#3192aa", brightWhite: "#8c959f",
-        };
   }
+
+  const font = () => fontStack(settings.fontFamily, cssVar("--mono"));
 
   let opened = false;
 
@@ -311,24 +303,30 @@
     if (tab.generation > 0 && tab.status === "connected" && term) openShell();
   });
 
-  // 切换主题或字号时更新终端（等样式变量生效后再读）
+  // 切换主题、配色、字体时更新终端（等样式变量生效后再读）
   $effect(() => {
     isDark();
-    const size = settings.fontSize;
+    settings.termTheme;
+    const { fontSize, lineHeight } = settings;
+    const family = font();
     if (!term) return;
     requestAnimationFrame(() => {
       term.options.theme = theme();
-      if (term.options.fontSize !== size) {
-        term.options.fontSize = size;
+      if (term.options.fontSize !== fontSize || term.options.lineHeight !== lineHeight || term.options.fontFamily !== family) {
+        term.options.fontSize = fontSize;
+        term.options.lineHeight = lineHeight;
+        term.options.fontFamily = family;
         fit.fit();
       }
     });
   });
 
+  // term 不是响应式的，创建好之后用 ready 通知下面的 effect 再跑一次（新开的标签页要拿到输入焦点）
+  let ready = $state(false);
+
   $effect(() => {
-    // 先读 focused：term 不是响应式的，第一次运行时还没创建，放在条件后面就不会被跟踪
     const f = focused;
-    if (active && term) {
+    if (active && ready) {
       queueMicrotask(() => {
         fit.fit();
         if (f) term.focus();
@@ -374,9 +372,9 @@
 
   onMount(() => {
     term = new Terminal({
-      fontFamily: cssVar("--mono"),
+      fontFamily: font(),
       fontSize: settings.fontSize,
-      lineHeight: 1.15,
+      lineHeight: settings.lineHeight,
       cursorBlink: true,
       scrollback: 10000,
       allowProposedApi: true,
@@ -464,6 +462,7 @@
 
     if (tab.generation > 0 && tab.status === "connected") openShell();
     const unregister = registerTerminal(pane, tab, write);
+    ready = true;
 
     let pending = 0;
     const ro = new ResizeObserver(() => {
@@ -483,12 +482,12 @@
   });
 </script>
 
-<div class="wrap" oncontextmenu={showMenu} role="presentation">
+<div class="wrap" style="background:{termBackground()}" oncontextmenu={showMenu} role="presentation">
   <div class="term" bind:this={el}>
     {#if ghost}
       <span
         class="ghost"
-        style="left:{ghost.x}px; top:{ghost.y}px; max-width:{ghost.w}px; height:{ghost.h}px; line-height:{ghost.h}px; font-size:{settings.fontSize}px"
+        style="left:{ghost.x}px; top:{ghost.y}px; max-width:{ghost.w}px; height:{ghost.h}px; line-height:{ghost.h}px; font-size:{settings.fontSize}px; font-family:{font()}"
         >{ghost.text}</span
       >
     {/if}

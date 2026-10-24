@@ -289,7 +289,6 @@ const en: Record<string, string> = {
   "浅色": "Light",
   "跟随系统": "System",
   "语言": "Language",
-  "终端字号": "Terminal font size",
   "快捷键": "Keyboard shortcuts",
   "新建连接（打开主机搜索）": "New connection (open host search)",
   "显示 / 隐藏文件面板": "Show / hide the file panel",
@@ -393,6 +392,16 @@ const en: Record<string, string> = {
   "分屏（Ctrl+Shift+D）": "Split (Ctrl+Shift+D)",
   "广播输入：同时输入到多个标签页（⌘B）": "Broadcast input: type into several tabs at once (⌘B)",
   "广播输入：同时输入到多个标签页（Ctrl+Shift+B）": "Broadcast input: type into several tabs at once (Ctrl+Shift+B)",
+  "用系统默认的程序打开": "Open with the default app",
+  "终端配色": "Terminal colors",
+  "跟随界面": "Match app",
+  "终端字体": "Terminal font",
+  "字体": "Font",
+  "默认": "Default",
+  "其他字体…": "Other font…",
+  "输入字体名称": "Font name",
+  "字号": "Size",
+  "行高": "Line height",
 };
 
 export default en;
