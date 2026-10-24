@@ -297,11 +297,20 @@ mod tests {
         sh.resize(100, 30).await.unwrap();
         let log = std::env::temp_dir().join(format!("shelltree-local-{}.log", std::process::id()));
         sh.set_log(Some(SessionLog::open(&log, false, "").unwrap()));
-        // shell 启动时会丢掉提前输入的内容（zsh 就是），等输出停下来、出现提示符再输入
+        // shell 启动时会丢掉提前输入的内容（zsh 就是），等输出停下来、出现提示符再输入。
+        // Windows 的 ConPTY 启动时会问光标位置（ESC[6n），不回答就一直等着，界面里是 xterm 回答的，这里自己回答
         let mut last = (0, std::time::Instant::now());
-        for _ in 0..200 {
+        let mut answered = false;
+        for _ in 0..300 {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            let n = out.lock().unwrap().len();
+            let (n, asked) = {
+                let o = out.lock().unwrap();
+                (o.len(), o.windows(4).any(|w| w == b"\x1b[6n"))
+            };
+            if asked && !answered {
+                answered = true;
+                sh.write(b"\x1b[1;1R").await.unwrap();
+            }
             if n != last.0 {
                 last = (n, std::time::Instant::now());
             } else if n > 0 && last.1.elapsed() > Duration::from_millis(800) {
@@ -310,7 +319,10 @@ mod tests {
         }
         sh.write(b"echo hello-shelltree\r").await.unwrap();
         sh.write(b"exit 3\r").await.unwrap();
-        let status = tokio::time::timeout(Duration::from_secs(20), rx).await.expect("shell didn't exit").unwrap();
+        let status = match tokio::time::timeout(Duration::from_secs(30), rx).await {
+            Ok(s) => s.unwrap(),
+            Err(_) => panic!("shell didn't exit, output: {:?}", String::from_utf8_lossy(&out.lock().unwrap())),
+        };
         let text = String::from_utf8_lossy(&out.lock().unwrap()).into_owned();
         assert_eq!(status, Some(3), "{text}");
         // 回显的命令里也有这个字符串，所以要出现两次

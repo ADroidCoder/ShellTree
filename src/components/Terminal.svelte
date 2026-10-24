@@ -38,6 +38,9 @@
   let fit: FitAddon;
   let search: SearchAddon;
   let shellId = 0;
+  /** shell 正在打开、还不知道 id：这期间的输入先攒着（Windows 的 ConPTY 一启动就问光标位置，xterm 的回答不能丢） */
+  let opening = false;
+  let queued = "";
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
   let cmdline: CommandLine;
   /** 灰色提示：还没输入的后半截，以及显示的位置 */
@@ -45,12 +48,16 @@
 
   /** 用户的输入都走这里：打开了广播输入时发给所有广播中的终端 */
   function send(data: string) {
-    if (!broadcastInput(tab, data)) write(data);
+    // 终端自动回答的查询（光标位置、设备属性、焦点变化等）只发给自己的 shell，不广播
+    if (/^\x1b(\[[\d;?>]*[RcnIO]|\]|P)/.test(data) || !broadcastInput(tab, data)) write(data);
   }
 
   /** 发给这个终端的 shell，顺便跟踪正在输入的命令 */
   function write(data: string) {
-    if (!shellId) return;
+    if (!shellId) {
+      if (opening) queued += data;
+      return;
+    }
     ghost = null;
     const cmd = cmdline.beforeInput(data);
     if (cmd) recordCommand(historyKey(tab.host), cmd);
@@ -245,6 +252,8 @@
   async function openShell() {
     if (shellId) api.shellClose(shellId).catch(() => {});
     shellId = 0;
+    opening = true;
+    queued = "";
     // 重连时保留之前的输出，只退出全屏程序的画面、恢复终端模式
     if (opened) term.write("\x1b[?1049l\x1b[!p\x1b[0m\r\n");
     else term.reset();
@@ -284,12 +293,16 @@
       id = r.id;
       shellId = id;
       if (early) api.shellAck(id, early);
+      if (queued) api.shellWrite(id, queued).catch(() => {});
       if (r.log_error) {
         logPath = "";
         toast(r.log_error, "error");
       }
     } catch (e) {
       term.write(`\x1b[31m${e}\x1b[0m\r\n`);
+    } finally {
+      opening = false;
+      queued = "";
     }
   }
 
@@ -429,7 +442,7 @@
     cmdline = new CommandLine(term);
     loadHistory();
     term.onData((d) => {
-      if (shellId) send(d);
+      if (shellId || opening) send(d);
       else if (d === "\r" && tab.status !== "connecting") connectTab(tab);
     });
     term.onWriteParsed(updateGhost);
