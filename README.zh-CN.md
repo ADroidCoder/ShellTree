@@ -2,12 +2,12 @@
 
 # ShellTree
 
-**免费、开源、轻量的 SSH / SFTP 桌面客户端，支持 macOS 和 Windows。**
+**免费、开源、轻量的 SSH / SFTP 桌面客户端，支持 macOS、Windows 和 Linux。**
 
 基于 Rust 和 Tauri 构建。终端、文件传输、主机管理放在一个窗口里，打开快、占用少、传输快。
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
 [English](README.md) · 简体中文
 
@@ -30,13 +30,14 @@
 
 ## 下载
 
-在 [**Releases 页面**](https://github.com/ADroidCoder/ShellTree/releases/latest) 下载最新安装包。还没有发布安装包时，可以先[从源码构建](#从源码构建)。
+在 [**Releases 页面**](https://github.com/ADroidCoder/ShellTree/releases/latest) 下载最新安装包。
 
 | 平台 | 文件 |
 |---|---|
 | macOS（Apple 芯片） | `ShellTree_<版本>_aarch64.dmg` |
 | macOS（Intel） | `ShellTree_<版本>_x64.dmg` |
 | Windows 10 / 11（x64） | `ShellTree_<版本>_x64-setup.exe` 或 `ShellTree_<版本>_x64_en-US.msi` |
+| Linux（x64） | `ShellTree_<版本>_amd64.deb`（Ubuntu、Debian）、`ShellTree-<版本>-1.x86_64.rpm`（Fedora、openSUSE）或 `ShellTree_<版本>_amd64.AppImage`（其他发行版，加上执行权限直接运行） |
 
 > [!NOTE]
 > 安装包暂时没有代码签名。
@@ -92,7 +93,8 @@
 ### 应用
 - **深色 / 浅色 / 跟随系统**三种外观。
 - **中英文界面**：默认跟随系统语言，可以在设置里随时切换，不用重启，已打开的会话不会断开。
-- 终端字号可调。
+- **终端配色和字体**：内置 Dracula、Tokyo Night、Catppuccin、Nord、Gruvbox、Monokai、Solarized 等配色，默认跟随界面深浅色；字体从本机装了的等宽字体里选（JetBrains Mono、Fira Code、Nerd Font 等），也可以输入任意字体名；字号、行高可调。
+- Linux 上密码保存在系统的 Secret Service 里（GNOME 钥匙环、KWallet）。
 - **自动更新**：后台检查 GitHub Release，有新版本时右上角提示，一键安装并重启。更新包带签名，安装前会校验。
 
 ## 快捷键
@@ -105,6 +107,7 @@ Windows 上把 ⌘ 换成 Ctrl+Shift（Ctrl+字母要留给终端，比如 Ctrl+
 | ⌘N | 新建主机 |
 | ⌘W | 关闭当前分屏，没有分屏时关闭当前会话 |
 | ⌘L | 打开本地终端 |
+| ⌘, | 打开设置 |
 | ⌘1 ~ ⌘9 | 切换到第 N 个会话 |
 | ⌘E | 显示 / 隐藏文件面板 |
 | ⌘J | 显示 / 隐藏命令片段 |
@@ -146,6 +149,7 @@ cargo run --release -p shelltree-core --example smoke -- 主机 端口 用户名
 
 - [Rust](https://rustup.rs/) 1.85 或更新
 - [Node.js](https://nodejs.org/) 22 或更新
+- 仅 Linux：`libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`librsvg2-dev`、`libdbus-1-dev`（Ubuntu / Debian 的包名）
 - 仅 Windows：[WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（Windows 10/11 一般自带）和 Visual Studio C++ 生成工具
 
 ```bash
@@ -161,6 +165,7 @@ npm run tauri build   # 打包安装包
 
 - macOS：`target/release/bundle/dmg/*.dmg` 和 `target/release/bundle/macos/*.app`
 - Windows：`target/release/bundle/msi/*.msi` 和 `target/release/bundle/nsis/*.exe`
+- Linux：`target/release/bundle/deb/*.deb`、`target/release/bundle/rpm/*.rpm` 和 `target/release/bundle/appimage/*.AppImage`
 
 **测试**
 

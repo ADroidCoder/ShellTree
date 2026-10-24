@@ -2,12 +2,12 @@
 
 # ShellTree
 
-**A lightweight, free and open-source SSH / SFTP desktop client for macOS and Windows.**
+**A lightweight, free and open-source SSH / SFTP desktop client for macOS, Windows and Linux.**
 
 Built with Rust and Tauri. Terminal, file transfer and host management in one window — quick to open, light on memory, fast to transfer.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
 English · [简体中文](README.zh-CN.md)
 
@@ -30,13 +30,14 @@ Popular SSH clients are either paid and require an account, or built on Electron
 
 ## Download
 
-Get the latest installer from the [**Releases page**](https://github.com/ADroidCoder/ShellTree/releases/latest). Until the first release is published, [build from source](#building-from-source).
+Get the latest installer from the [**Releases page**](https://github.com/ADroidCoder/ShellTree/releases/latest).
 
 | Platform | File |
 |---|---|
 | macOS (Apple Silicon) | `ShellTree_<version>_aarch64.dmg` |
 | macOS (Intel) | `ShellTree_<version>_x64.dmg` |
 | Windows 10 / 11 (x64) | `ShellTree_<version>_x64-setup.exe` or `ShellTree_<version>_x64_en-US.msi` |
+| Linux (x64) | `ShellTree_<version>_amd64.deb` (Ubuntu, Debian), `ShellTree-<version>-1.x86_64.rpm` (Fedora, openSUSE) or `ShellTree_<version>_amd64.AppImage` (any distro — make it executable and run it) |
 
 > [!NOTE]
 > The installers aren't code-signed yet.
@@ -92,7 +93,8 @@ Get the latest installer from the [**Releases page**](https://github.com/ADroidC
 ### App
 - **Dark / Light / System** appearance.
 - **English and Chinese UI** — follows the system language by default and can be switched in Settings at any time, without restarting or dropping open sessions.
-- Adjustable terminal font size.
+- **Terminal colors and fonts** — built-in Dracula, Tokyo Night, Catppuccin, Nord, Gruvbox, Monokai and Solarized schemes, matching the app's light/dark mode by default. Pick a font from the monospace fonts installed on your computer (JetBrains Mono, Fira Code, Nerd Fonts…) or type any font name; adjust size and line height.
+- On Linux, passwords are stored in the Secret Service (GNOME Keyring, KWallet).
 - **Auto-update** — checks GitHub Releases in the background, shows a button in the top-right corner when a new version is out, and installs it with one click. Updates are signed and verified before installing.
 
 ## Keyboard shortcuts
@@ -105,6 +107,7 @@ On Windows, use Ctrl+Shift instead of ⌘ (plain Ctrl+letter is left to the term
 | ⌘N | New host |
 | ⌘W | Close the current pane, or the session if it isn't split |
 | ⌘L | Open a local terminal |
+| ⌘, | Open Settings |
 | ⌘1 – ⌘9 | Switch to session N |
 | ⌘E | Show / hide the file panel |
 | ⌘J | Show / hide snippets |
@@ -146,6 +149,7 @@ cargo run --release -p shelltree-core --example smoke -- host port user password
 
 - [Rust](https://rustup.rs/) 1.85 or newer
 - [Node.js](https://nodejs.org/) 22 or newer
+- Linux only: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `librsvg2-dev`, `libdbus-1-dev` (Ubuntu / Debian package names)
 - Windows only: [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (usually preinstalled on Windows 10/11) and the Visual Studio C++ Build Tools
 
 ```bash
@@ -161,6 +165,7 @@ Output:
 
 - macOS: `target/release/bundle/dmg/*.dmg` and `target/release/bundle/macos/*.app`
 - Windows: `target/release/bundle/msi/*.msi` and `target/release/bundle/nsis/*.exe`
+- Linux: `target/release/bundle/deb/*.deb`, `target/release/bundle/rpm/*.rpm` and `target/release/bundle/appimage/*.AppImage`
 
 **Tests**
 

@@ -1,5 +1,6 @@
 // 外观设置，存在 localStorage 里
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { findTheme } from "./themes";
 export type Theme = "dark" | "light" | "system";
 
 function read(key: string, def: string) {
@@ -21,6 +22,11 @@ function write(key: string, value: string) {
 export const settings = $state({
   theme: read("shelltree.theme", "dark") as Theme,
   fontSize: Number(read("shelltree.fontSize", "13")) || 13,
+  /** 终端字体，空表示默认的等宽字体 */
+  fontFamily: read("shelltree.fontFamily", ""),
+  lineHeight: Number(read("shelltree.lineHeight", "1.15")) || 1.15,
+  /** 终端配色，auto 跟着界面的深色 / 浅色 */
+  termTheme: read("shelltree.termTheme", "auto"),
   /** 主机页用卡片还是列表 */
   hostView: read("shelltree.hostView", "grid") as "grid" | "list",
   /** 终端里根据历史命令显示灰色提示 */
@@ -55,6 +61,26 @@ export function applyTheme() {
 export function setFontSize(n: number) {
   settings.fontSize = Math.max(9, Math.min(28, n));
   write("shelltree.fontSize", String(settings.fontSize));
+}
+
+export function setFontFamily(font: string) {
+  settings.fontFamily = font.trim();
+  write("shelltree.fontFamily", settings.fontFamily);
+}
+
+export function setLineHeight(n: number) {
+  settings.lineHeight = Math.round(Math.max(1, Math.min(2, n)) * 100) / 100;
+  write("shelltree.lineHeight", String(settings.lineHeight));
+}
+
+export function setTermTheme(id: string) {
+  settings.termTheme = findTheme(id) ? id : "auto";
+  write("shelltree.termTheme", settings.termTheme);
+}
+
+/** 终端区域的背景色（CSS 值）。跟随界面时就是界面的背景 */
+export function termBackground() {
+  return findTheme(settings.termTheme)?.colors.background ?? "var(--bg-graph)";
 }
 
 export function setSuggest(on: boolean) {
