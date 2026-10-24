@@ -17,6 +17,7 @@ import {
   type TransferInfo,
 } from "./api";
 import { hostLabel, uid } from "./util";
+import { leaf, leaves, MAX_PANES, paneId, remove as removePane, split as splitPane, type Pane } from "./panes";
 
 export interface DialogSpec {
   title: string;
@@ -30,10 +31,17 @@ export interface DialogSpec {
 
 export type TabStatus = "connecting" | "connected" | "disconnected" | "error";
 
-/** 一个会话标签页：一条 SSH 连接，上面有终端和文件面板 */
+/** 一个会话标签页：一条 SSH 连接，上面有终端（可以分屏）和文件面板；或者本机的终端 */
 export class Tab {
   key = uid();
   host: Host;
+  /** 本机的终端，没有连接 */
+  local: boolean;
+  /** 分屏布局和当前输入焦点所在的那一块 */
+  layout = $state<Pane>(leaf());
+  focused = $state("");
+  /** 广播输入：打开了的标签页之间，在任何一个里输入都会发给所有打开了的 */
+  broadcast = $state(false);
   status = $state<TabStatus>("connecting");
   error = $state("");
   /** 每次连接成功加一，终端据此重新打开 shell */
@@ -55,8 +63,11 @@ export class Tab {
   /** 跳板机的密码，按在连接链里的位置 */
   jumpSecrets: Record<number, { password?: string; passphrase?: string; save?: boolean }> = {};
 
-  constructor(host: Host) {
+  constructor(host: Host, local = false) {
     this.host = host;
+    this.local = local;
+    this.focused = leaves(this.layout)[0];
+    if (local) this.side = null;
   }
 
   get title() {
@@ -82,7 +93,7 @@ export const app = $state({
   editing: null as Host | null,
   dialog: null as DialogSpec | null,
   hostKeys: [] as HostKeyPrompt[],
-  toasts: [] as { id: number; text: string; kind: "info" | "error" }[],
+  toasts: [] as { id: number; text: string; kind: "info" | "error"; button?: ToastButton }[],
   transfers: [] as TransferInfo[],
   /** 每个传输任务的速度（字节/秒） */
   speeds: {} as Record<number, number>,
@@ -104,10 +115,15 @@ export function errorText(e: string) {
 }
 
 let toastId = 0;
-export function toast(text: string, kind: "info" | "error" = "info") {
+export interface ToastButton {
+  label: string;
+  action: () => void;
+}
+
+export function toast(text: string, kind: "info" | "error" = "info", button?: ToastButton) {
   const id = ++toastId;
-  app.toasts.push({ id, text, kind });
-  setTimeout(() => (app.toasts = app.toasts.filter((t) => t.id !== id)), kind === "error" ? 6000 : 3000);
+  app.toasts.push({ id, text, kind, button });
+  setTimeout(() => (app.toasts = app.toasts.filter((t) => t.id !== id)), kind === "error" || button ? 6000 : 3000);
 }
 
 export function ask(spec: Omit<DialogSpec, "resolve">) {
@@ -286,14 +302,79 @@ export async function openSession(host: Host) {
   await connectTab(app.tabs[app.tabs.length - 1]);
 }
 
+/** 打开本机的终端 */
+export function openLocal() {
+  const tab = new Tab(newHost({ name: t("本地终端"), host: "localhost", user: "", port: 0 }), true);
+  app.tabs.push(tab);
+  activate(tab);
+  connectTab(app.tabs[app.tabs.length - 1]);
+}
+
+// ---------- 分屏 ----------
+
+export function splitFocused(tab: Tab, dir: "row" | "col") {
+  if (leaves(tab.layout).length >= MAX_PANES) {
+    toast(t("最多分成 {0} 块", MAX_PANES), "error");
+    return;
+  }
+  const id = paneId();
+  tab.layout = splitPane(tab.layout, tab.focused, dir, id);
+  tab.focused = id;
+}
+
+/** 关掉一块分屏。只剩一块时关掉整个标签页 */
+export function closePane(tab: Tab, id: string) {
+  const next = removePane(tab.layout, id);
+  if (!next) return closeTab(tab);
+  const list = leaves(tab.layout);
+  tab.layout = next;
+  if (tab.focused === id) {
+    // 焦点移到旁边那块
+    const rest = leaves(next);
+    tab.focused = rest[Math.max(0, list.indexOf(id) - 1)] ?? rest[0];
+  }
+}
+
+/** 焦点移到下一块（step 为 -1 时上一块） */
+export function cyclePane(tab: Tab, step: number) {
+  const list = leaves(tab.layout);
+  const i = list.indexOf(tab.focused);
+  tab.focused = list[(i + step + list.length) % list.length];
+}
+
+// ---------- 广播输入 ----------
+
+/** 所有打开着的终端，广播输入时用。write 直接发给这个终端的 shell */
+const terminals = new Map<string, { tab: Tab; write: (data: string) => void }>();
+
+export function registerTerminal(id: string, tab: Tab, write: (data: string) => void) {
+  terminals.set(id, { tab, write });
+  return () => terminals.delete(id);
+}
+
+/** 在一个终端里输入了 data。返回 true 表示已经广播出去了（包括这个终端自己） */
+export function broadcastInput(from: Tab, data: string) {
+  if (!from.broadcast) return false;
+  for (const x of terminals.values()) {
+    if (x.tab.broadcast && app.tabs.includes(x.tab)) x.write(data);
+  }
+  return true;
+}
+
+export function setBroadcastAll(on: boolean) {
+  for (const tab of app.tabs) tab.broadcast = on;
+}
+
 export async function closeTab(tab: Tab) {
   const i = app.tabs.findIndex((t) => t.key === tab.key);
   if (i < 0) return;
   const running = app.transfers.some((t) => t.session === tab.key && t.state === "running");
   if (running && !(await confirm(t("关闭会话"), t("这个会话还有文件正在传输，关闭会取消传输。"), t("关闭"), true))) return;
   app.tabs.splice(i, 1);
-  api.disconnect(tab.key).catch(() => {});
-  api.editForget(tab.key).catch(() => {});
+  if (!tab.local) {
+    api.disconnect(tab.key).catch(() => {});
+    api.editForget(tab.key).catch(() => {});
+  }
   if (app.activeKey === tab.key) {
     const next = app.tabs[Math.min(i, app.tabs.length - 1)];
     if (next) activate(next);
@@ -343,6 +424,13 @@ const SECRET_CODES = [NEED_PASSWORD, AUTH_FAILED, NEED_PASSPHRASE, BAD_PASSPHRAS
 /** 连接（或重连）。缺密码或密码错误时问用户，问完再试。
  *  auto：断线后的自动重连，失败时不显示错误卡片，留给调用方继续重试 */
 export async function connectTab(tab: Tab, auto = false) {
+  if (tab.local) {
+    // 本地终端没有连接，直接让终端重新打开 shell
+    tab.status = "connected";
+    tab.error = "";
+    tab.generation++;
+    return;
+  }
   const h = tab.host;
   const chain = hostChain(h);
   if (typeof chain === "string") {
@@ -490,6 +578,7 @@ export async function refreshForwards(tab: Tab) {
 /** 终端里的 shell 结束了（输入了 exit 或连接断开）。lost：连接意外断开，自动重连 */
 export function onShellExit(tab: Tab, lost = false) {
   tab.status = "disconnected";
+  if (tab.local) return;
   tab.forwards = [];
   api.disconnect(tab.key).catch(() => {});
   if (lost) autoReconnect(tab);

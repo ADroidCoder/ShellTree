@@ -11,4 +11,6 @@ russh-sftp = "3"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+# 本地终端：macOS/Linux 用 openpty，Windows 用 ConPTY
+portable-pty = "0.9"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }

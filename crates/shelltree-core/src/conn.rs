@@ -476,10 +476,11 @@ fn load_key(path: &Path, passphrase: Option<&str>) -> Result<keys::PrivateKey> {
 impl Connection {
     /// 识别服务器系统（读 /etc/os-release 的 ID，例如 ubuntu、debian、centos），界面用来显示图标。
     /// 识别不了返回 None，不影响连接
-    pub async fn detect_os(&self) -> Option<String> {
+    /// 在服务器上执行一条命令，返回输出（最多 64 KB）。超时或出错时返回 None
+    pub async fn exec(&self, cmd: &str, timeout: Duration) -> Option<String> {
         let run = async {
             let mut ch = self.handle.channel_open_session().await.ok()?;
-            ch.exec(true, "cat /etc/os-release 2>/dev/null || uname -s").await.ok()?;
+            ch.exec(true, cmd).await.ok()?;
             let mut out = Vec::new();
             while let Some(msg) = ch.wait().await {
                 match msg {
@@ -491,15 +492,24 @@ impl Connection {
                     break;
                 }
             }
-            let text = String::from_utf8_lossy(&out);
-            let id = text
-                .lines()
-                .find_map(|l| l.strip_prefix("ID="))
-                .map(|v| v.trim().trim_matches('"').to_lowercase())
-                .or_else(|| text.lines().next().map(|l| l.trim().to_lowercase()))?;
-            (!id.is_empty() && id.len() < 32).then_some(id)
+            Some(String::from_utf8_lossy(&out).into_owned())
         };
-        tokio::time::timeout(Duration::from_secs(3), run).await.ok().flatten()
+        tokio::time::timeout(timeout, run).await.ok().flatten()
+    }
+
+    pub async fn detect_os(&self) -> Option<String> {
+        let text = self.exec("cat /etc/os-release 2>/dev/null || uname -s", Duration::from_secs(3)).await?;
+        let id = text
+            .lines()
+            .find_map(|l| l.strip_prefix("ID="))
+            .map(|v| v.trim().trim_matches('"').to_lowercase())
+            .or_else(|| text.lines().next().map(|l| l.trim().to_lowercase()))?;
+        (!id.is_empty() && id.len() < 32).then_some(id)
+    }
+
+    /// 读一次服务器状态，不是 Linux 时返回 None
+    pub async fn stats(&self) -> Option<crate::stats::Sample> {
+        crate::stats::parse(&self.exec(crate::stats::COMMAND, Duration::from_secs(5)).await?)
     }
 
     pub fn is_closed(&self) -> bool {

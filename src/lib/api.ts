@@ -21,6 +21,28 @@ export interface ForwardInfo {
   active: number;
 }
 
+/** 会话日志：写到哪个文件，开头写一行说明，是否接着原文件写 */
+export interface LogStart {
+  path: string;
+  note: string;
+  append: boolean;
+}
+
+/** 服务器状态的一次采样，CPU 和网络是累计值 */
+export interface StatsSample {
+  cpu_total: number;
+  cpu_idle: number;
+  mem_total: number;
+  mem_used: number;
+  swap_total: number;
+  swap_used: number;
+  net_rx: number;
+  net_tx: number;
+  disk_total: number;
+  disk_used: number;
+  load: number;
+}
+
 export interface Host {
   id: string;
   name: string;
@@ -102,6 +124,8 @@ export type TransferState = "running" | "done" | "failed" | "cancelled";
 export interface TransferInfo {
   id: number;
   session: string;
+  /** 服务器之间复制时的源会话 */
+  from: string | null;
   upload: boolean;
   name: string;
   dest: string;
@@ -130,6 +154,14 @@ export const NEED_PASSPHRASE = "need-passphrase";
 export const AUTH_FAILED = "auth-failed";
 export const BAD_PASSPHRASE = "bad-passphrase";
 
+function openShell(cmd: string, args: Record<string, unknown>, onData: (data: Uint8Array) => void, onExit: (status: number | null) => void) {
+  const data = new Channel<ArrayBuffer | number[]>();
+  data.onmessage = (m) => onData(m instanceof ArrayBuffer ? new Uint8Array(m) : Uint8Array.from(m));
+  const exit = new Channel<number | null>();
+  exit.onmessage = onExit;
+  return invoke<{ id: number; log_error: string | null }>(cmd, { ...args, onData: data, onExit: exit });
+}
+
 export const api = {
   hostsLoad: () => invoke<{ saved: Host[]; groups: string[]; ssh_config: Host[] }>("hosts_load"),
   hostsSave: (hosts: Host[], groups: string[]) => invoke<void>("hosts_save", { hosts, groups }),
@@ -143,6 +175,7 @@ export const api = {
   forwardStart: (session: string, rule: ForwardRule) => invoke<ForwardInfo>("forward_start", { session, rule }),
   forwardStop: (session: string, id: number) => invoke<void>("forward_stop", { session, id }),
   forwardsList: (session: string) => invoke<ForwardInfo[]>("forwards_list", { session }),
+  serverStats: (session: string) => invoke<StatsSample | null>("server_stats", { session }),
 
   editOpen: (session: string, path: string, editor: string | null) => invoke<void>("edit_open", { session, path, editor }),
   editUpload: (id: number) => invoke<void>("edit_upload", { id }),
@@ -153,15 +186,19 @@ export const api = {
     session: string,
     cols: number,
     rows: number,
+    log: LogStart | null,
     onData: (data: Uint8Array) => void,
     onExit: (status: number | null) => void,
-  ) => {
-    const data = new Channel<ArrayBuffer | number[]>();
-    data.onmessage = (m) => onData(m instanceof ArrayBuffer ? new Uint8Array(m) : Uint8Array.from(m));
-    const exit = new Channel<number | null>();
-    exit.onmessage = onExit;
-    return invoke<number>("shell_open", { session, cols, rows, onData: data, onExit: exit });
-  },
+  ) => openShell("shell_open", { session, cols, rows, log }, onData, onExit),
+  /** 本机的终端 */
+  localShellOpen: (
+    cols: number,
+    rows: number,
+    log: LogStart | null,
+    onData: (data: Uint8Array) => void,
+    onExit: (status: number | null) => void,
+  ) => openShell("local_shell_open", { cols, rows, log }, onData, onExit),
+  shellLog: (id: number, log: LogStart | null) => invoke<void>("shell_log", { id, log }),
   shellWrite: (id: number, data: string) => invoke<void>("shell_write", { id, data }),
   shellResize: (id: number, cols: number, rows: number) => invoke<void>("shell_resize", { id, cols, rows }),
   shellAck: (id: number, bytes: number) => invoke<void>("shell_ack", { id, bytes }),
@@ -176,6 +213,8 @@ export const api = {
 
   transferStart: (session: string, upload: boolean, sources: { path: string; is_dir?: boolean }[], dest: string) =>
     invoke<number[]>("transfer_start", { session, upload, sources, dest }),
+  transferCopy: (from: string, sources: { path: string; is_dir?: boolean }[], session: string, dest: string) =>
+    invoke<number[]>("transfer_copy", { from, sources, session, dest }),
   transfersList: () => invoke<TransferInfo[]>("transfers_list"),
   transferCancel: (id: number) => invoke<void>("transfer_cancel", { id }),
   transfersClear: () => invoke<void>("transfers_clear"),

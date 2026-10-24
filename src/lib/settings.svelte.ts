@@ -25,6 +25,8 @@ export const settings = $state({
   hostView: read("shelltree.hostView", "grid") as "grid" | "list",
   /** 终端里根据历史命令显示灰色提示 */
   suggest: read("shelltree.suggest", "1") === "1",
+  /** 终端下面显示服务器的 CPU、内存、网速 */
+  statusBar: read("shelltree.statusBar", "1") === "1",
   /** 编辑远程文件用的程序，空表示系统的文本编辑器 */
   editor: read("shelltree.editor", ""),
   /** 系统是不是深色，主题为“跟随系统”时用 */
@@ -58,6 +60,11 @@ export function setFontSize(n: number) {
 export function setSuggest(on: boolean) {
   settings.suggest = on;
   write("shelltree.suggest", on ? "1" : "0");
+}
+
+export function setStatusBar(on: boolean) {
+  settings.statusBar = on;
+  write("shelltree.statusBar", on ? "1" : "0");
 }
 
 export function setEditor(path: string) {

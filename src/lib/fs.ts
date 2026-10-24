@@ -9,6 +9,8 @@ export interface FileSource {
   key: string;
   remote: boolean;
   label: string;
+  /** 远程：user@host:port，用来判断两个会话是不是同一台服务器 */
+  server?: string;
   home(): Promise<string>;
   list(path: string): Promise<Entry[]>;
   mkdir(path: string): Promise<void>;
@@ -82,6 +84,7 @@ export function remoteSource(tab: Tab): FileSource {
     key: s,
     remote: true,
     label: hostLabel(tab.host),
+    server: `${tab.host.user}@${tab.host.host}:${tab.host.port}`,
     home: () => api.sftpHome(s),
     list: (p) => api.sftpList(s, p),
     mkdir: (p) => api.sftpMkdir(s, p),

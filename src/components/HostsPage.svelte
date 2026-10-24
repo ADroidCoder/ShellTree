@@ -8,6 +8,7 @@
   import Pencil from "@lucide/svelte/icons/pencil";
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
+  import Terminal from "@lucide/svelte/icons/terminal";
   import type { Host } from "../lib/api";
   import {
     app,
@@ -16,12 +17,13 @@
     deleteHost,
     moveToGroup,
     newHost,
+    openLocal,
     openSession,
     renameGroup,
     SSH_CONFIG_GROUP as SSH_CONFIG,
   } from "../lib/store.svelte";
   import { setHostView, settings } from "../lib/settings.svelte";
-  import { hostLabel, parseAddress } from "../lib/util";
+  import { hostLabel, isMac, parseAddress } from "../lib/util";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import HostIcon from "./HostIcon.svelte";
 
@@ -193,6 +195,7 @@
     {#if group === null}
       <button onclick={newGroup}><FolderPlus size={15} /> {t("新建分组")}</button>
     {/if}
+    <button onclick={openLocal} title={isMac ? "⌘L" : "Ctrl+Shift+L"}><Terminal size={15} /> {t("本地终端")}</button>
     <span class="fill"></span>
     <div class="seg">
       <button class:on={settings.hostView === "grid"} onclick={() => setHostView("grid")} title={t("卡片")}><LayoutGrid size={15} /></button>

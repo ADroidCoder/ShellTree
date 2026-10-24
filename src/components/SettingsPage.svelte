@@ -4,7 +4,7 @@
   import Sun from "@lucide/svelte/icons/sun";
   import MonitorCog from "@lucide/svelte/icons/monitor-cog";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { setEditor, setFontSize, setSuggest, setTheme, settings, type Theme } from "../lib/settings.svelte";
+  import { setEditor, setFontSize, setStatusBar, setSuggest, setTheme, settings, type Theme } from "../lib/settings.svelte";
   import { clearHistory, historyCount, loadHistory } from "../lib/history";
   import { confirm, toast } from "../lib/store.svelte";
   import { onMount } from "svelte";
@@ -99,6 +99,14 @@
       <span>{t("已记录 {0} 条命令，只保存在本机", count)}</span>
       <button onclick={clear} disabled={!count}>{t("清除历史")}</button>
     </div>
+  </section>
+
+  <section>
+    <div class="label">{t("服务器状态栏")}</div>
+    <label class="switch">
+      <input type="checkbox" checked={settings.statusBar} onchange={(e) => setStatusBar((e.target as HTMLInputElement).checked)} />
+      {t("在终端下面显示服务器的 CPU、内存、磁盘和网速（仅 Linux）")}
+    </label>
   </section>
 
   <section>

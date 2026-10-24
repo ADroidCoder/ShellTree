@@ -125,6 +125,26 @@ async fn main() {
     assert_eq!(perm.trim(), "751");
     println!("edit write ok, perm kept {}", perm.trim());
 
+    // 服务器之间复制：另开一条连接当目标，复制一个文件夹（含子文件夹、可执行文件、5 MB 的文件）
+    exec(&c, "rm -rf /tmp/cp-src /tmp/cp-dst && mkdir -p /tmp/cp-src/sub /tmp/cp-dst && echo hi > /tmp/cp-src/a.txt && printf '#!/bin/sh\\necho ok' > /tmp/cp-src/sub/run.sh && chmod 755 /tmp/cp-src/sub/run.sh && head -c 5000000 /dev/urandom > /tmp/cp-src/sub/big.bin").await;
+    let c2 = conn::connect_with_known_hosts(&p, cb.host_key.clone(), Some(tmp.join("known_hosts"))).await.unwrap();
+    let s2 = sftp::open(&c2).await.unwrap();
+    let progress = Arc::new(sftp::Progress::default());
+    sftp::copy(s.clone(), "/tmp/cp-src".into(), true, s2.clone(), "/tmp/cp-dst".into(), progress.clone()).await.unwrap();
+    let sums = exec(&c, "cd /tmp && md5sum cp-src/a.txt cp-src/sub/big.bin cp-dst/cp-src/a.txt cp-dst/cp-src/sub/big.bin | awk '{print $1}'; stat -c %a cp-dst/cp-src/sub/run.sh; sh cp-dst/cp-src/sub/run.sh").await;
+    let l: Vec<&str> = sums.lines().collect();
+    assert_eq!((l[0], l[1]), (l[2], l[3]), "{sums}");
+    assert_eq!((l[4], l[5]), ("755", "ok"), "{sums}");
+    use std::sync::atomic::Ordering::Relaxed;
+    assert_eq!((progress.files_done.load(Relaxed), progress.done.load(Relaxed)), (3, progress.total.load(Relaxed)));
+    println!("server-to-server copy ok: {} files, {} bytes", progress.files_done.load(Relaxed), progress.done.load(Relaxed));
+    c2.disconnect().await;
+
+    // 服务器状态
+    let st = c.stats().await.expect("stats");
+    assert!(st.cpu_total > 0 && st.mem_total > 0 && st.mem_used <= st.mem_total && st.disk_total > 0, "{st:?}");
+    println!("stats ok: mem {} / {} MB, disk {} / {} MB, load {}", st.mem_used >> 20, st.mem_total >> 20, st.disk_used >> 20, st.disk_total >> 20, st.load);
+
     c.disconnect().await;
     let _ = std::fs::remove_dir_all(tmp);
     println!("all ok");
